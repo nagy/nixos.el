@@ -208,11 +208,13 @@ attribute path (e.g. \"legacyPackages.x86_64-linux.foo\")."
 
 (ert-deftest nixos-refresh-cache-clears-both ()
   "`nixos-refresh-cache' resets all caches."
-  (setq nixos--options-cache (make-hash-table :test 'equal)
+  (setq nixos--options-cache nil
+        nixos--package-meta-cache nil
         nixos--packages-cache (make-hash-table :test 'equal)
         nixos--packages-keys '("a"))
   (nixos-refresh-cache)
   (should-not nixos--options-cache)
+  (should-not nixos--package-meta-cache)
   (should-not nixos--packages-cache)
   (should-not nixos--packages-keys))
 
@@ -716,6 +718,45 @@ attribute path (e.g. \"legacyPackages.x86_64-linux.foo\")."
   (with-temp-buffer
     (nixos--embark-insert-option "services.foo.enable")
     (should (equal (buffer-string) "services.foo.enable"))))
+
+
+;;; Memoization
+
+(ert-deftest nixos-package-meta-memoized ()
+  "`with-memoization' using `gethash' caches results correctly."
+  (let* ((h (make-hash-table :test 'equal))
+         (compute-count 0))
+    (cl-labels ((costly-computation ()
+                  (cl-incf compute-count)
+                  (format "data-%d" compute-count)))
+      ;; First call: compute.
+      (should (equal (with-memoization (gethash "a" h) (costly-computation))
+                     "data-1"))
+      (should (= compute-count 1))
+      ;; Second call: cached.
+      (should (equal (with-memoization (gethash "a" h) (costly-computation))
+                     "data-1"))
+      (should (= compute-count 1))
+      ;; Different key: fresh compute.
+      (should (equal (with-memoization (gethash "b" h) (costly-computation))
+                     "data-2"))
+      (should (= compute-count 2))
+      ;; Nil results are NOT cached (retry each time).
+      (let ((retry-count 0))
+        (should-not (with-memoization (gethash "c" h)
+                      (cl-incf retry-count)
+                      nil))
+        (should-not (with-memoization (gethash "c" h)
+                      (cl-incf retry-count)
+                      nil))
+        (should (= retry-count 2))))))
+
+(ert-deftest nixos-package-meta-cache-cleared ()
+  "`nixos-refresh-cache' clears the package meta cache."
+  (setq nixos--package-meta-cache (make-hash-table :test 'equal))
+  (puthash "foo" "cached" nixos--package-meta-cache)
+  (nixos-refresh-cache)
+  (should-not nixos--package-meta-cache))
 
 (provide 'nixos-tests)
 ;;; nixos-tests.el ends here

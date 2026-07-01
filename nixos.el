@@ -137,6 +137,12 @@ keys like pname, version, description, etc.")
 (defvar nixos--packages-keys nil
   "Cached list of short package names (prefix stripped).")
 
+(defvar nixos--package-meta-cache nil
+  "Hash table memoizing `nixos--package-meta' results.
+Keys are package names, values are JSON strings.
+Memozied because nix store paths are immutable — the metadata
+for a given package name never changes.")
+
 (defun nixos--resolve-path (path &optional fallback)
   "Return PATH unless it is still a build-time placeholder.
 If PATH starts with @, it is an unsubstituted placeholder;
@@ -186,7 +192,8 @@ from the JSON files."
   (interactive)
   (setq nixos--options-cache nil
         nixos--packages-cache nil
-        nixos--packages-keys nil)
+        nixos--packages-keys nil
+        nixos--package-meta-cache nil)
   (message "nixos: cache cleared"))
 
 
@@ -340,17 +347,23 @@ When JSON-MODE-P is non-nil, enable `json-mode' if available."
 (defun nixos--package-meta (package-name)
   "Fetch metadata for PACKAGE-NAME using `nix-instantiate'.
 Returns a JSON string, or nil if nix-instantiate is not
-available."
-  (when (and (boundp 'nix-instantiate-executable)
-             (stringp nix-instantiate-executable))
-    (with-temp-buffer
-      (when (zerop
-             (call-process nix-instantiate-executable nil t nil
-                           "--strict" "--json" "--eval"
-                           "--argstr" "cand" package-name
-                           "-E"
-                           "{cand}: (import <nixpkgs> {}).${cand}.meta"))
-        (buffer-string)))))
+available.
+
+Results are memoized: since Nix store paths are immutable, the
+metadata for a given package is stable forever."
+  (unless nixos--package-meta-cache
+    (setq nixos--package-meta-cache (make-hash-table :test 'equal)))
+  (with-memoization (gethash package-name nixos--package-meta-cache)
+    (when (and (boundp 'nix-instantiate-executable)
+               (stringp nix-instantiate-executable))
+      (with-temp-buffer
+        (when (zerop
+               (call-process nix-instantiate-executable nil t nil
+                             "--strict" "--json" "--eval"
+                             "--argstr" "cand" package-name
+                             "-E"
+                             "{cand}: (import <nixpkgs> {}).${cand}.meta"))
+          (buffer-string))))))
 
 
 ;;; Bookmarks
