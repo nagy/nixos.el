@@ -483,5 +483,151 @@ Add this to `nix-mode-hook' for automatic setup:
               (cons '(nixos-option . nixos--option-at-point)
                     thing-at-point-provider-alist)))
 
+
+;;; Tabulated Browse Mode
+
+(defvar-keymap nixos-browse-options-mode-map
+  :doc "Keymap for `nixos-browse-options-mode'."
+  :parent tabulated-list-mode-map
+  "RET" #'nixos-browse-options-visit
+  "b"   #'nixos-browse-options-search-url
+  "g"   #'nixos-browse-options-refresh)
+
+(define-derived-mode nixos-browse-options-mode tabulated-list-mode
+  "NixOS-Options"
+  "Major mode for browsing all NixOS options in a sortable table.
+
+\\{nixos-browse-options-mode-map}"
+  (setq tabulated-list-format
+        [("Option" 50 t)
+         ("Type" 20 t)
+         ("Description" 0 nil)])
+  (setq tabulated-list-padding 2)
+  (setq tabulated-list-sort-key '("Option" . nil))
+  (tabulated-list-init-header)
+  (hl-line-mode 1))
+
+(defun nixos-browse-options--entry (name data)
+  "Return a `tabulated-list' entry for option NAME with DATA."
+  (let ((type (or (gethash "type" data) ""))
+        (desc (or (nixos--slurp-description data) "")))
+    (list name (vector name type desc))))
+
+(defun nixos-browse-options--entries ()
+  "Generate `tabulated-list-entries' for all NixOS options."
+  (let ((options (nixos--options-load))
+        entries)
+    (if (= (hash-table-count options) 0)
+        (user-error
+         "No NixOS options loaded (check `nixos-options-json-file')")
+      (maphash
+       (lambda (key data)
+         (push (nixos-browse-options--entry key data) entries))
+       options)
+      (nreverse entries))))
+
+(defun nixos-browse-options--current-name ()
+  "Return the option name at point, or signal an error."
+  (or (tabulated-list-get-id)
+      (user-error "No option on this line")))
+
+(defun nixos-browse-options-visit ()
+  "Display details for the NixOS option at point."
+  (interactive)
+  (nixos-option (nixos-browse-options--current-name)))
+
+(defun nixos-browse-options-search-url ()
+  "Open the current option on search.nixos.org."
+  (interactive)
+  (browse-url (format nixos-option-search-url-template
+                      (nixos-browse-options--current-name))))
+
+(defun nixos-browse-options-refresh ()
+  "Refresh the NixOS options table."
+  (interactive)
+  (setq tabulated-list-entries (nixos-browse-options--entries))
+  (tabulated-list-print t))
+
+;;;###autoload
+(defun nixos-browse-options ()
+  "Display all NixOS options in a browseable table.
+
+Options are shown with columns for name, type, and description.
+\<nixos-browse-options-mode-map>
+\\[nixos-browse-options-visit] on an entry to view full details,
+\\[nixos-browse-options-search-url] to open on search.nixos.org,
+\\[nixos-browse-options-refresh] to reload the data.
+
+Emacs' built-in narrowing (\\[narrow-to-defun] etc.) can be used
+to filter the view in-place."
+  (interactive)
+  (let ((buf (get-buffer-create "*NixOS Options*")))
+    (with-current-buffer buf
+      (nixos-browse-options-mode)
+      (setq tabulated-list-entries (nixos-browse-options--entries))
+      (tabulated-list-print))
+    (switch-to-buffer buf)))
+
+
+;;; Eldoc
+
+(defun nixos-eldoc-function (callback &rest _ignored)
+  "Eldoc documentation function for NixOS options at point.
+Calls CALLBACK with the option description when point is on a
+NixOS option reference in `nix-mode'.  Only returns docs when the
+options cache is already populated (does not trigger a load)."
+  (when (and (derived-mode-p 'nix-mode)
+             nixos--options-cache)
+    (when-let* ((opt (nixos--option-at-point))
+                (data (gethash opt nixos--options-cache))
+                (desc (nixos--slurp-description data)))
+      (funcall callback desc))))
+
+;;;###autoload
+(defun nixos-eldoc-setup ()
+  "Enable eldoc support for NixOS options in the current buffer.
+Add this alongside `nixos-thing-at-point-setup' in
+`nix-mode-hook' for full integration:
+
+  (add-hook \='nix-mode-hook #\='nixos-thing-at-point-setup)
+  (add-hook \='nix-mode-hook #\='nixos-eldoc-setup)"
+  (add-hook 'eldoc-documentation-functions
+            #'nixos-eldoc-function nil t))
+
+
+;;; Marginalia annotators
+
+(defun nixos--marginalia-option-annotator (cand)
+  "Marginalia annotator for `nixos-option' completion candidates.
+Shows the option type and description."
+  (when-let* ((data (gethash cand (nixos--options-load)))
+              (type (gethash "type" data))
+              (desc (nixos--slurp-description data)))
+    (concat (propertize (concat "(" type ")")
+                        'face 'marginalia-type)
+            " " desc)))
+
+(defun nixos--marginalia-package-annotator (cand)
+  "Marginalia annotator for `nixos-package' completion candidates.
+Shows the package version and description."
+  (let* ((full-key (concat "legacyPackages.x86_64-linux." cand))
+         (data (gethash full-key (nixos--packages-load)))
+         (version (and data (gethash "version" data)))
+         (desc (and data (nixos--slurp-description data))))
+    (when (or version desc)
+      (concat (when version
+                (concat (propertize (concat "(" version ")")
+                                    'face 'marginalia-version)
+                        " "))
+              (or desc "")))))
+
+(defvar marginalia-annotator-registry)
+
+(with-eval-after-load 'marginalia
+  (add-to-list 'marginalia-annotator-registry
+               '(nixos-option nixos--marginalia-option-annotator builtin none))
+  (add-to-list 'marginalia-annotator-registry
+               '(nixos-package nixos--marginalia-package-annotator builtin none)))
+
 (provide 'nixos)
 ;;; nixos.el ends here

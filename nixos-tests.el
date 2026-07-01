@@ -502,5 +502,131 @@ attribute path (e.g. \"legacyPackages.x86_64-linux.foo\")."
            "htop"
            (format nixos-package-search-url-template "htop"))))
 
+
+;;; Tabulated browse mode
+
+(ert-deftest nixos-browse-options-entry ()
+  "`nixos-browse-options--entry' returns a proper tabulated-list entry."
+  (let ((data (make-hash-table :test 'equal)))
+    (puthash "type" "boolean" data)
+    (puthash "description" "Enable something" data)
+    (let ((entry (nixos-browse-options--entry "services.foo.enable" data)))
+      (should (equal (car entry) "services.foo.enable"))
+      (let ((cols (cadr entry)))
+        (should (equal (aref cols 0) "services.foo.enable"))
+        (should (equal (aref cols 1) "boolean"))
+        (should (equal (aref cols 2) "Enable something"))))))
+
+(ert-deftest nixos-browse-options-entries ()
+  "`nixos-browse-options--entries' generates entries for all options."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable" :type "boolean" :description "Enable foo")
+       '("services.bar.enable" :type "string" :description "Set bar"))
+    (let ((entries (nixos-browse-options--entries)))
+      (should (= (length entries) 2))
+      (should (assoc "services.foo.enable" entries))
+      (should (assoc "services.bar.enable" entries)))))
+
+(ert-deftest nixos-browse-options-empty ()
+  "`nixos-browse-options--entries' errors on empty cache."
+  (setq nixos--options-cache (make-hash-table :test 'equal))
+  (should-error (nixos-browse-options--entries)))
+
+(ert-deftest nixos-browse-options-current-name ()
+  "`nixos-browse-options--current-name' returns the entry at point."
+  (cl-letf (((symbol-function 'tabulated-list-get-id)
+             (lambda () "services.foo.enable")))
+    (should (equal (nixos-browse-options--current-name)
+                   "services.foo.enable")))
+  ;; Error case
+  (cl-letf (((symbol-function 'tabulated-list-get-id) (lambda () nil)))
+    (should-error (nixos-browse-options--current-name))))
+
+(ert-deftest nixos-browse-options-entries-loaded ()
+  "Tabulated list entries are properly structured."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable" :type "boolean" :description "foo"))
+    (let ((entries (nixos-browse-options--entries)))
+      (should (= (length entries) 1))
+      (should (equal (car (car entries)) "services.foo.enable")))))
+
+
+;;; Eldoc
+
+(ert-deftest nixos-eldoc-outside-nix-mode ()
+  "Eldoc returns nil outside nix-mode."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable" :description "Enable foo"))
+    (with-temp-buffer
+      (fundamental-mode)
+      (insert "services.foo.enable")
+      (goto-char (point-min))
+      (let ((called nil))
+        (nixos-eldoc-function (lambda (s) (setq called s)))
+        (should-not called)))))
+
+(ert-deftest nixos-eldoc-no-option-at-point ()
+  "Eldoc returns nil when point is not on an option."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable" :description "Enable foo"))
+    (skip-unless (fboundp 'nix-mode))
+    (with-temp-buffer
+      (nix-mode)
+      (insert "let x = 42; in x")
+      (goto-char (point-min))
+      (let ((called nil))
+        (nixos-eldoc-function (lambda (s) (setq called s)))
+        (should-not called)))))
+
+(ert-deftest nixos-eldoc-option-at-point ()
+  "Eldoc returns description when point is on a known option."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable" :description "Enable foo"))
+    (skip-unless (fboundp 'nix-mode))
+    (with-temp-buffer
+      (nix-mode)
+      (insert "services.foo.enable = true;")
+      (goto-char (point-min))
+      (search-forward "services")
+      (goto-char (match-beginning 0))
+      (let ((result nil))
+        (nixos-eldoc-function (lambda (s) (setq result s)))
+        (should (equal result "Enable foo"))))))
+
+(ert-deftest nixos-eldoc-setup ()
+  "`nixos-eldoc-setup' adds to `eldoc-documentation-functions'."
+  (with-temp-buffer
+    (nixos-eldoc-setup)
+    (should (memq #'nixos-eldoc-function eldoc-documentation-functions))))
+
+
+;;; Marginalia annotators
+
+(ert-deftest nixos-marginalia-option-annotator ()
+  "Option annotator shows type and description."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable" :type "boolean" :description "Enable foo"))
+    (let ((ann (nixos--marginalia-option-annotator "services.foo.enable")))
+      (should (stringp ann))
+      (should (string-match-p "boolean" ann))
+      (should (string-match-p "Enable foo" ann)))))
+
+(ert-deftest nixos-marginalia-package-annotator ()
+  "Package annotator shows version and description."
+  (nixos-test--with-packages
+      (nixos-test--packages-hash
+       '("legacyPackages.x86_64-linux.htop"
+         :pname "htop" :version "3.3.0" :description "Interactive process viewer"))
+    (let ((ann (nixos--marginalia-package-annotator "htop")))
+      (should (stringp ann))
+      (should (string-match-p "3.3.0" ann))
+      (should (string-match-p "process viewer" ann)))))
+
 (provide 'nixos-tests)
 ;;; nixos-tests.el ends here
