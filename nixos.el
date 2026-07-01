@@ -74,26 +74,30 @@
   :group 'tools
   :prefix "nixos-")
 
-(defcustom nixos-options-json-file "/etc/nixos-options.json"
+(defcustom nixos-options-json-file "@nixosOptionsJson@"
   "Path to the NixOS options JSON file.
 
 This file should contain a flat JSON object where each key is a
 dotted option path (e.g. \"services.postgresql.enable\") and each
 value is an object with at least a \"description\" field.
 
-It can be generated from the NixOS manual and exposed via
-`environment.etc' in your NixOS configuration."
+When building via default.nix, this is substituted with a Nix
+store path.  Otherwise it falls back to
+\"/etc/nixos-options.json\" (which NixOS can populate via
+`environment.etc')."
   :type 'file
   :group 'nixos)
 
-(defcustom nixos-search-json-file "/etc/nix-search.json"
+(defcustom nixos-search-json-file "@nixosSearchJson@"
   "Path to the Nix package search JSON file.
 
 This file should contain the output of `nix search --json'.
 Keys typically look like \"legacyPackages.x86_64-linux.htop\".
 
-See default.nix for an example of how to generate and expose this
-file in your NixOS configuration."
+When building via default.nix, this is substituted with a Nix
+store path.  Otherwise it falls back to
+\"/etc/nix-search.json\" (see default.nix for an example of how
+to generate this in your NixOS configuration)."
   :type 'file
   :group 'nixos)
 
@@ -133,30 +137,46 @@ keys like pname, version, description, etc.")
 (defvar nixos--packages-keys nil
   "Cached list of short package names (prefix stripped).")
 
+(defun nixos--resolve-path (path &optional fallback)
+  "Return PATH unless it is still a build-time placeholder.
+If PATH starts with @, it is an unsubstituted placeholder;
+return FALLBACK instead (defaulting to the /etc/ path)."
+  (if (string-prefix-p "@" path)
+      (or fallback (concat "/etc/" (substring path 1 -1) ".json"))
+    path))
+
 (defun nixos--options-load ()
   "Load NixOS options from `nixos-options-json-file' into cache.
 Returns the cached hash table."
   (unless nixos--options-cache
-    (if (file-readable-p nixos-options-json-file)
-        (setq nixos--options-cache
-              (json-parse-file nixos-options-json-file))
-      (setq nixos--options-cache (make-hash-table :test 'equal))))
+    (let ((file (nixos--resolve-path nixos-options-json-file)))
+      (if (file-readable-p file)
+          (with-temp-buffer
+            (insert-file-contents file)
+            (goto-char (point-min))
+            (setq nixos--options-cache (json-parse-buffer)))
+        (setq nixos--options-cache (make-hash-table :test 'equal)))))
   nixos--options-cache)
 
 (defun nixos--packages-load ()
   "Load Nix packages from `nixos-search-json-file' into cache.
 Returns the cached hash table."
   (unless nixos--packages-cache
-    (let ((table (if (file-readable-p nixos-search-json-file)
-                     (json-parse-file nixos-search-json-file)
-                   (make-hash-table :test 'equal))))
-      (setq nixos--packages-cache table
-            nixos--packages-keys
-            (sort (mapcar (lambda (k)
-                            (string-remove-prefix
-                             "legacyPackages.x86_64-linux." k))
-                          (hash-table-keys table))
-                  #'string<))))
+    (let ((file (nixos--resolve-path nixos-search-json-file)))
+      (if (file-readable-p file)
+          (let ((table (with-temp-buffer
+                         (insert-file-contents file)
+                         (goto-char (point-min))
+                         (json-parse-buffer))))
+            (setq nixos--packages-cache table
+                  nixos--packages-keys
+                  (sort (mapcar (lambda (k)
+                                  (string-remove-prefix
+                                   "legacyPackages.x86_64-linux." k))
+                                (hash-table-keys table))
+                        #'string<)))
+        (setq nixos--packages-cache (make-hash-table :test 'equal)
+              nixos--packages-keys nil))))
   nixos--packages-cache)
 
 (defun nixos-refresh-cache ()
@@ -434,8 +454,7 @@ identifier like \"services.postgresql.enable\"."
 (defun nixos--option-bounds ()
   "Return the bounds of a NixOS option reference around point."
   (when (derived-mode-p 'nix-mode)
-    (let* ((ident-re (rx (any "A-Z" "a-z" "0-9" "_" "-" "'" ".")))
-           (p (point))
+    (let* ((p (point))
            start end)
       (save-excursion
         ;; Scan backward to the start.
