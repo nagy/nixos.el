@@ -43,10 +43,28 @@
 ;; Both commands use the standard completion framework, so they work
 ;; with icomplete, vertico, fido-mode, etc.  Annotation support is
 ;; provided out of the box (marginalia is fine too).
+;;
+;; Deep integration:
+;;
+;;   - `nixos-browse-mode' (major mode) powers the detail buffer with
+;;     bookmark support and a `b' key to open search.nixos.org.
+;;
+;;   - `thingatpt' integration: in `nix-mode' buffers, point on a
+;;     dotted identifier like `services.foo.enable' yields it via
+;;     (thing-at-point 'nixos-option).  Call (nixos-thing-at-point-setup)
+;;     from `nix-mode-hook' to enable.
+;;
+;;   - Completion metadata includes `category' for Marginalia users.
+;;
+;; Usage:
+;;
+;;   (with-eval-after-load 'nix-mode
+;;     (add-hook 'nix-mode-hook #'nixos-thing-at-point-setup))
 
 ;;; Code:
 
 (require 'json)
+(require 'thingatpt)
 
 ;; Forward-declare; nix-mode is optional at compile time.
 (defvar nix-instantiate-executable)
@@ -82,6 +100,20 @@ file in your NixOS configuration."
 (defcustom nixos-annotation-width 70
   "Maximum width of the description annotation shown during completion."
   :type 'integer
+  :group 'nixos)
+
+(defcustom nixos-option-search-url-template
+  "https://search.nixos.org/options?channel=unstable&query=%s"
+  "URL template for browsing an option on search.nixos.org.
+%s is replaced with the option name."
+  :type 'string
+  :group 'nixos)
+
+(defcustom nixos-package-search-url-template
+  "https://search.nixos.org/packages?channel=unstable&query=%s"
+  "URL template for browsing a package on search.nixos.org.
+%s is replaced with the package name."
+  :type 'string
   :group 'nixos)
 
 
@@ -184,6 +216,7 @@ ACTION."
   (pcase action
     ('metadata
      '(metadata
+       (category . nixos-option)
        (annotation-function . nixos--option-annotate)))
     (_
      (complete-with-action action
@@ -207,6 +240,7 @@ ACTION."
   (pcase action
     ('metadata
      '(metadata
+       (category . nixos-package)
        (annotation-function . nixos--package-annotate)))
     (_
      (nixos--packages-load)              ; ensure nixos--packages-keys exists
@@ -215,11 +249,58 @@ ACTION."
                            string predicate))))
 
 
-;;; Display
+;;; Browse Major Mode
 
-(defun nixos--display (title raw-json &optional json-mode-p)
-  "Display RAW-JSON in a read-only buffer titled TITLE.
-When JSON-MODE-P is non-nil, enable `json-mode' in the buffer."
+(defvar-keymap nixos-browse-mode-map
+  :doc "Keymap for `nixos-browse-mode'."
+  :parent special-mode-map
+  "b" #'nixos-browse-search-url
+  "g" #'nixos-browse-refresh)
+
+(define-derived-mode nixos-browse-mode special-mode "NixOS-Browse"
+  "Major mode for browsing NixOS option / package details.
+
+\\{nixos-browse-mode-map}"
+  :interactive nil
+  (setq-local bookmark-make-record-function #'nixos--bookmark-make-record))
+
+(defvar-local nixos--browse-type nil
+  "The type of item in the current browse buffer: `option' or `package'.")
+
+(defvar-local nixos--browse-name nil
+  "The name of the option or package in the current browse buffer.")
+
+(defun nixos--browse-setup (type name)
+  "Configure the current buffer for browsing TYPE (option or package) NAME."
+  (setq nixos--browse-type type
+        nixos--browse-name name))
+
+(defun nixos-browse-search-url ()
+  "Open the current option or package on search.nixos.org."
+  (interactive)
+  (unless nixos--browse-name
+    (user-error "No option or package in this buffer"))
+  (let ((url (if (eq nixos--browse-type 'option)
+                 (format nixos-option-search-url-template
+                         nixos--browse-name)
+               (format nixos-package-search-url-template
+                       nixos--browse-name))))
+    (browse-url url)))
+
+(defun nixos-browse-refresh ()
+  "Refresh the current browse buffer."
+  (interactive)
+  (unless nixos--browse-name
+    (user-error "Nothing to refresh"))
+  (cl-case nixos--browse-type
+    (option (nixos-option nixos--browse-name))
+    (package (nixos-package nixos--browse-name))
+    (t (user-error "Unknown browse type %s" nixos--browse-type))))
+
+(defun nixos--display (title type name raw-json &optional json-mode-p)
+  "Display RAW-JSON in a `nixos-browse-mode' buffer titled TITLE.
+TYPE is `option' or `package'.  NAME is the option/package name.
+When JSON-MODE-P is non-nil, enable `json-mode' if available."
   (let ((buf (generate-new-buffer title)))
     (with-current-buffer buf
       (insert raw-json)
@@ -230,6 +311,8 @@ When JSON-MODE-P is non-nil, enable `json-mode' in the buffer."
       (when (and json-mode-p (fboundp 'json-mode))
         (json-mode))
       (goto-char (point-min))
+      (nixos-browse-mode)
+      (nixos--browse-setup type name)
       (read-only-mode 1)
       (set-buffer-modified-p nil))
     (switch-to-buffer buf)))
@@ -250,6 +333,32 @@ available."
         (buffer-string)))))
 
 
+;;; Bookmarks
+
+(defun nixos--bookmark-make-record ()
+  "Create a bookmark record for the current browse buffer.
+Intended for use as `bookmark-make-record-function'."
+  (unless nixos--browse-name
+    (user-error "No option or package to bookmark"))
+  `(,(format "NixOS %s: %s"
+             (if (eq nixos--browse-type 'option) "option" "package")
+             nixos--browse-name)
+    (type . ,nixos--browse-type)
+    (name . ,nixos--browse-name)
+    (handler . nixos--bookmark-jump)))
+
+;;;###autoload
+(defun nixos--bookmark-jump (bookmark)
+  "Restore a nixos BOOKMARK.
+Called by the bookmark system."
+  (let ((type (alist-get 'type bookmark))
+        (name (alist-get 'name bookmark)))
+    (cl-case type
+      (option (nixos-option name))
+      (package (nixos-package name))
+      (t (user-error "Unknown bookmark type %s" type)))))
+
+
 ;;; Interactive commands
 
 ;;;###autoload
@@ -265,6 +374,7 @@ directly."
     (let ((data (gethash cand (nixos--options-load))))
       (if data
           (nixos--display (format "*nixos-option %s*" cand)
+                          'option cand
                           (json-serialize data)
                           t)
         (user-error "Option `%s' not found" cand)))))
@@ -281,14 +391,12 @@ available; otherwise the contents of `nixos-search-json-file' are
 shown."
   (interactive)
   (let ((cand (or package-name
-                  (completing-read
-                   ;; Avoid "package" in the prompt because
-                   ;; Marginalia may interpret it specially.
-                   "nix-pkg> "
-                   #'nixos--package-collection))))
+                  (completing-read "nix-pkg> "
+                                   #'nixos--package-collection))))
     (let ((meta-json (nixos--package-meta cand)))
       (if meta-json
           (nixos--display (format "*nixos-package %s*" cand)
+                          'package cand
                           meta-json
                           t)
         ;; Fall back to the search JSON data.
@@ -296,10 +404,65 @@ shown."
                (data (gethash full-key (nixos--packages-load))))
           (if data
               (nixos--display (format "*nixos-package %s*" cand)
+                              'package cand
                               (json-serialize data)
                               t)
             (user-error "Package `%s' not found" cand)))))))
 
+
+;;; Thing-At-Point
+
+(defconst nixos--dotted-identifier-re
+  (rx (seq bos
+           (any "A-Z" "a-z" "_")
+           (* (any "A-Z" "a-z" "0-9" "_" "-" "'" "."))
+           "."
+           (* (any "A-Z" "a-z" "0-9" "_" "-" "'" ".")))
+      eos)
+  "Regexp matching a dotted NixOS option or package identifier.
+Must contain at least one dot and match Nix identifier rules.")
+
+(defun nixos--option-at-point ()
+  "Return the NixOS option reference around point, or nil.
+Works in `nix-mode' buffers when point is on a dotted
+identifier like \"services.postgresql.enable\"."
+  (when (derived-mode-p 'nix-mode)
+    (let ((bounds (nixos--option-bounds)))
+      (when bounds
+        (buffer-substring-no-properties (car bounds) (cdr bounds))))))
+
+(defun nixos--option-bounds ()
+  "Return the bounds of a NixOS option reference around point."
+  (when (derived-mode-p 'nix-mode)
+    (let* ((ident-re (rx (any "A-Z" "a-z" "0-9" "_" "-" "'" ".")))
+           (p (point))
+           start end)
+      (save-excursion
+        ;; Scan backward to the start.
+        (skip-chars-backward "A-Za-z0-9_-'.")
+        (setq start (point))
+        ;; Scan forward to the end.
+        (goto-char p)
+        (skip-chars-forward "A-Za-z0-9_-'.")
+        (setq end (point))
+        (when (and (> end start)
+                   (string-match-p nixos--dotted-identifier-re
+                                   (buffer-substring-no-properties start end)))
+          (cons start end))))))
+
+(put 'nixos-option 'bounds-of-thing-at-point #'nixos--option-bounds)
+(put 'nixos-option 'thing-at-point #'nixos--option-at-point)
+
+;;;###autoload
+(defun nixos-thing-at-point-setup ()
+  "Enable `thingatpt' integration for `nixos-option' in the current buffer.
+Add this to `nix-mode-hook' for automatic setup:
+
+  (add-hook \\='nix-mode-hook #\\='nixos-thing-at-point-setup)"
+  (interactive)
+  (setq-local thing-at-point-provider-alist
+              (cons '(nixos-option . nixos--option-at-point)
+                    thing-at-point-provider-alist)))
 
 (provide 'nixos)
 ;;; nixos.el ends here

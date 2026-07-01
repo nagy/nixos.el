@@ -283,5 +283,224 @@ attribute path (e.g. \"legacyPackages.x86_64-linux.foo\")."
        '("legacyPackages.x86_64-linux.foo" :pname "foo"))
     (should-error (nixos-package "nonexistent"))))
 
+
+;;; Metadata (Marginalia category)
+
+(ert-deftest nixos-metadata-option-category ()
+  "Option metadata includes the nixos-option category."
+  (let ((meta (nixos--option-collection "" nil 'metadata)))
+    (should (eq (alist-get 'category (cdr meta)) 'nixos-option))))
+
+(ert-deftest nixos-metadata-package-category ()
+  "Package metadata includes the nixos-package category."
+  (let ((meta (nixos--package-collection "" nil 'metadata)))
+    (should (eq (alist-get 'category (cdr meta)) 'nixos-package))))
+
+
+;;; Thing-at-point
+
+(ert-deftest nixos-thing-at-point-in-nix-mode ()
+  "`thing-at-point' for 'nixos-option returns a dotted identifier in nix-mode."
+  (skip-unless (fboundp 'nix-mode))
+  (with-temp-buffer
+    (nix-mode)
+    (insert "services.postgresql.enable = true;")
+    (goto-char (point-min))
+    (search-forward "services")
+    (goto-char (match-beginning 0))
+    (should (equal (thing-at-point 'nixos-option)
+                   "services.postgresql.enable"))))
+
+(ert-deftest nixos-thing-at-point-no-dot ()
+  "`thing-at-point' returns nil for identifiers without a dot."
+  (skip-unless (fboundp 'nix-mode))
+  (with-temp-buffer
+    (nix-mode)
+    (insert "foo = true;")
+    (goto-char (point-min))
+    (search-forward "foo")
+    (goto-char (match-beginning 0))
+    (should-not (thing-at-point 'nixos-option))))
+
+(ert-deftest nixos-thing-at-point-not-nix-mode ()
+  "`thing-at-point' for 'nixos-option returns nil outside nix-mode."
+  (with-temp-buffer
+    (fundamental-mode)
+    (insert "services.foo.enable")
+    (goto-char (point-min))
+    (should-not (thing-at-point 'nixos-option))))
+
+(ert-deftest nixos-thing-at-point-bounds ()
+  "Bounds of 'nixos-option span the whole dotted identifier."
+  (skip-unless (fboundp 'nix-mode))
+  (with-temp-buffer
+    (nix-mode)
+    (insert "{ services.postgresql.enable = true; }")
+    (goto-char (point-min))
+    (search-forward "services")
+    (let ((bounds (bounds-of-thing-at-point 'nixos-option)))
+      (should bounds)
+      (should (equal (buffer-substring (car bounds) (cdr bounds))
+                     "services.postgresql.enable")))))
+
+(ert-deftest nixos-thing-at-point-provider-alist ()
+  "`nixos-thing-at-point-setup' adds to `thing-at-point-provider-alist'."
+  (skip-unless (fboundp 'nix-mode))
+  (with-temp-buffer
+    (nix-mode)
+    (nixos-thing-at-point-setup)
+    (let ((entry (assq 'nixos-option thing-at-point-provider-alist)))
+      (should entry)
+      (should (eq (cdr entry) 'nixos--option-at-point)))))
+
+
+;;; Browse mode
+
+(ert-deftest nixos-browse-mode-option-buffer ()
+  "Option display buffer uses `nixos-browse-mode' and stores metadata."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable" :description "Enable foo"))
+    (let ((buf-name nil))
+      (cl-letf (((symbol-function 'switch-to-buffer)
+                 (lambda (buf) (setq buf-name (buffer-name buf))
+                   (set-buffer buf))))
+        (nixos-option "services.foo.enable")
+        (should (eq major-mode 'nixos-browse-mode))
+        (should (eq nixos--browse-type 'option))
+        (should (equal nixos--browse-name "services.foo.enable"))
+        (kill-buffer)))))
+
+(ert-deftest nixos-browse-mode-package-buffer ()
+  "Package display buffer stores correct browse metadata."
+  (nixos-test--with-packages
+      (nixos-test--packages-hash
+       '("legacyPackages.x86_64-linux.htop"
+         :pname "htop" :description "viewer"))
+    (cl-letf (((symbol-function 'switch-to-buffer)
+               (lambda (buf) (set-buffer buf))))
+      (nixos-package "htop")
+      (should (eq major-mode 'nixos-browse-mode))
+      (should (eq nixos--browse-type 'package))
+      (should (equal nixos--browse-name "htop"))
+      (kill-buffer))))
+
+(ert-deftest nixos-browse-search-url-option ()
+  "`nixos-browse-search-url' opens the correct option URL."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable" :description "bar"))
+    (let ((url-called nil)
+          (url-arg nil))
+      (cl-letf (((symbol-function 'switch-to-buffer)
+                 (lambda (buf) (set-buffer buf)))
+                ((symbol-function 'browse-url)
+                 (lambda (url) (setq url-called t url-arg url))))
+        (nixos-option "services.foo.enable")
+        (nixos-browse-search-url)
+        (should url-called)
+        (should (string-match-p "services.foo.enable" url-arg))
+        (should (string-match-p "options" url-arg))
+        (kill-buffer)))))
+
+(ert-deftest nixos-browse-search-url-package ()
+  "`nixos-browse-search-url' opens the correct package URL."
+  (nixos-test--with-packages
+      (nixos-test--packages-hash
+       '("legacyPackages.x86_64-linux.htop"
+         :pname "htop" :description "viewer"))
+    (let ((url-called nil)
+          (url-arg nil))
+      (cl-letf (((symbol-function 'switch-to-buffer)
+                 (lambda (buf) (set-buffer buf)))
+                ((symbol-function 'browse-url)
+                 (lambda (url) (setq url-called t url-arg url))))
+        (nixos-package "htop")
+        (nixos-browse-search-url)
+        (should url-called)
+        (should (string-match-p "htop" url-arg))
+        (should (string-match-p "packages" url-arg))
+        (kill-buffer)))))
+
+(ert-deftest nixos-browse-refresh-option ()
+  "`nixos-browse-refresh' re-displays the option."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable" :description "foo"))
+    (let ((browse-buf nil)
+          (refreshed nil))
+      (cl-letf (((symbol-function 'switch-to-buffer)
+                 (lambda (buf) (setq browse-buf buf) (set-buffer buf))))
+        (nixos-option "services.foo.enable")
+        (should (equal nixos--browse-name "services.foo.enable"))
+        ;; Now mock nixos-option and call refresh from the browse buffer.
+        (cl-letf (((symbol-function 'nixos-option)
+                   (lambda (name) (setq refreshed name))))
+          (nixos-browse-refresh)
+          (should (equal refreshed "services.foo.enable")))
+        (kill-buffer browse-buf)))))
+
+
+;;; Bookmarks
+
+(ert-deftest nixos-bookmark-make-record ()
+  "`nixos--bookmark-make-record' returns a bookmark record with the right handler."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable" :description "bar"))
+    (cl-letf (((symbol-function 'switch-to-buffer)
+               (lambda (buf) (set-buffer buf))))
+      (nixos-option "services.foo.enable")
+      (let ((rec (nixos--bookmark-make-record)))
+        (should (stringp (car rec)))
+        (should (eq (alist-get 'type rec) 'option))
+        (should (equal (alist-get 'name rec) "services.foo.enable"))
+        (should (eq (alist-get 'handler rec) 'nixos--bookmark-jump)))
+      (kill-buffer))))
+
+(ert-deftest nixos-bookmark-jump-option ()
+  "`nixos--bookmark-jump' calls `nixos-option' with the stored name."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable" :description "bar"))
+    (let ((called-name nil))
+      (cl-letf (((symbol-function 'switch-to-buffer)
+                 (lambda (buf) (set-buffer buf)))
+                ((symbol-function 'nixos-option)
+                 (lambda (name) (setq called-name name))))
+        (nixos--bookmark-jump '((type . option)
+                                (name . "services.foo.enable")))
+        (should (equal called-name "services.foo.enable"))))))
+
+(ert-deftest nixos-bookmark-jump-package ()
+  "`nixos--bookmark-jump' calls `nixos-package' with the stored name."
+  (nixos-test--with-packages
+      (nixos-test--packages-hash
+       '("legacyPackages.x86_64-linux.htop"
+         :pname "htop" :description "viewer"))
+    (let ((called-name nil))
+      (cl-letf (((symbol-function 'switch-to-buffer)
+                 (lambda (buf) (set-buffer buf)))
+                ((symbol-function 'nixos-package)
+                 (lambda (name) (setq called-name name))))
+        (nixos--bookmark-jump '((type . package)
+                                (name . "htop")))
+        (should (equal called-name "htop"))))))
+
+
+;;; URL templates
+
+(ert-deftest nixos-url-template-option ()
+  "Option URL template substitutes correctly."
+  (should (string-match-p
+           "services.foo.enable"
+           (format nixos-option-search-url-template "services.foo.enable"))))
+
+(ert-deftest nixos-url-template-package ()
+  "Package URL template substitutes correctly."
+  (should (string-match-p
+           "htop"
+           (format nixos-package-search-url-template "htop"))))
+
 (provide 'nixos-tests)
 ;;; nixos-tests.el ends here
