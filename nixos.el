@@ -282,9 +282,10 @@ ACTION."
   :doc "Keymap for `nixos-browse-mode'."
   :parent special-mode-map
   "b" #'nixos-browse-search-url
-  "g" #'nixos-browse-refresh)
+  "g" #'nixos-browse-refresh
+  "r" #'nixos-browse-show-requisites)
 
-(define-derived-mode nixos-browse-mode special-mode "NixOS-Browse"
+(define-derived-mode nixos-browse-mode fundamental-mode "NixOS-Browse"
   "Major mode for browsing NixOS option / package details.
 
 \\{nixos-browse-mode-map}"
@@ -297,10 +298,66 @@ ACTION."
 (defvar-local nixos--browse-name nil
   "The name of the option or package in the current browse buffer.")
 
-(defun nixos--browse-setup (type name)
+(defvar-local nixos--browse-out-path nil
+  "Store path of the package in the current browse buffer, if any.")
+
+(defun nixos--browse-setup (type name &optional out-path)
   "Configure the current buffer for browsing TYPE (option or package) NAME."
   (setq nixos--browse-type type
-        nixos--browse-name name))
+        nixos--browse-name name
+        nixos--browse-out-path out-path))
+
+(defun nixos-browse-show-requisites ()
+  "Open the store path of the current package in `nix-store-path-mode'.
+This shows requisites, references, derivers, etc."
+  (interactive)
+  (unless (eq nixos--browse-type 'package)
+    (user-error "Requisites view only available for packages"))
+  (unless nixos--browse-out-path
+    (user-error "No store path available for this package"))
+  (require 'nix-store nil t)
+  (if (fboundp 'nix-store-show-path)
+      (nix-store-show-path nixos--browse-out-path)
+    (user-error "nix-store-mode not available; install nix-mode")))
+
+
+;;; Display helpers
+
+(defun nixos--value-to-string (value)
+  "Convert a parsed JSON VALUE to a human-readable string."
+  (cond
+   ((eq value :null) nil)
+   ((stringp value) value)
+   ((numberp value) (number-to-string value))
+   ((eq value t) "true")
+   ((eq value :json-false) "false")
+   ((or (hash-table-p value) (vectorp value))
+    (json-serialize value))
+   (t (prin1-to-string value))))
+
+(defun nixos--insert-field (label &optional value)
+  "Insert LABEL (bold) followed by VALUE on the same line.
+If VALUE is nil or empty, nothing is inserted after the label."
+  (insert (propertize label 'face 'bold))
+  (when (and value (not (string-empty-p value)))
+    (insert "  " value))
+  (insert "\n"))
+
+(defun nixos--insert-multiline (label value)
+  "Insert LABEL (bold) on its own line, followed by indented VALUE."
+  (when (and value (not (string-empty-p value)))
+    (insert (propertize label 'face 'bold) "\n")
+    (dolist (line (split-string value "\n"))
+      (insert "  " line "\n"))
+    (insert "\n")))
+
+(defun nixos--insert-link (label &optional url)
+  "Insert LABEL (bold) followed by URL as a clickable link."
+  (insert (propertize label 'face 'bold))
+  (when url
+    (insert "  " (propertize url 'mouse-face 'highlight
+                              'help-echo url)))
+  (insert "\n"))
 
 (defun nixos-browse-search-url ()
   "Open the current option or package on search.nixos.org."
@@ -324,30 +381,81 @@ ACTION."
     (package (nixos-package nixos--browse-name))
     (t (user-error "Unknown browse type %s" nixos--browse-type))))
 
-(defun nixos--display (title type name raw-json &optional json-mode-p)
-  "Display RAW-JSON in a `nixos-browse-mode' buffer titled TITLE.
-TYPE is `option' or `package'.  NAME is the option/package name.
-When JSON-MODE-P is non-nil, enable `json-mode' if available."
-  (let ((buf (generate-new-buffer title)))
+(defun nixos--display-option (name data)
+  "Create a formatted detail buffer for NixOS option NAME with DATA."
+  (let ((buf (generate-new-buffer (format "*nixos-option %s*" name))))
     (with-current-buffer buf
-      (insert raw-json)
-      (let ((inhibit-read-only t))
-        (goto-char (point-min))
-        (when (looking-at-p "{")
-          (json-pretty-print-buffer)))
-      (when (and json-mode-p (fboundp 'json-mode))
-        (json-mode))
-      (goto-char (point-min))
       (nixos-browse-mode)
-      (nixos--browse-setup type name)
+      (nixos--browse-setup 'option name)
+      ;; Title
+      (insert (propertize name 'face 'org-document-title) "\n\n")
+      ;; Fields
+      (nixos--insert-field "Type:" (gethash "type" data))
+      (let ((def (nixos--value-to-string (gethash "default" data))))
+        (nixos--insert-field "Default:" def))
+      (let ((desc (gethash "description" data)))
+        (when (and desc (not (eq desc :null)))
+          (nixos--insert-multiline "Description:" desc)))
+      (let ((example (nixos--value-to-string (gethash "example" data))))
+        (nixos--insert-field "Example:" example))
+      (let ((decls (gethash "declarations" data)))
+        (when (and decls (not (eq decls :null)))
+          (insert (propertize "Declared by:" 'face 'bold) "\n")
+          (dolist (d (if (vectorp decls) (append decls nil) decls))
+            (insert "  " d "\n"))))
+      (goto-char (point-min))
       (read-only-mode 1)
       (set-buffer-modified-p nil))
-    (switch-to-buffer buf)))
+    (pop-to-buffer buf)))
+
+(defun nixos--display-package (name info)
+  "Create a formatted detail buffer for Nix package NAME with INFO.
+INFO is an alist from `nixos--package-meta' with keys meta and outPath."
+  (let ((meta-data (alist-get 'meta info))
+        (out-path (alist-get 'outPath info))
+        (buf (generate-new-buffer (format "*nixos-package %s*" name))))
+    (with-current-buffer buf
+      (nixos-browse-mode)
+      (nixos--browse-setup 'package name out-path)
+      ;; Title
+      (insert (propertize name 'face 'org-document-title) "\n\n")
+      (when out-path
+        (insert (propertize "Store path:" 'face 'bold)
+                "  " out-path "\n"))
+      ;; Meta fields (hash table from parsed JSON)
+      (when meta-data
+        (let ((desc (gethash "description" meta-data)))
+          (when (and desc (not (eq desc :null)))
+            (nixos--insert-multiline "Description:" desc)))
+        (nixos--insert-field "Version:" (gethash "version" meta-data))
+        (let ((hp (gethash "homepage" meta-data)))
+          (when (and hp (not (eq hp :null)))
+            (nixos--insert-link "Homepage:" hp)))
+        (let ((lic (gethash "license" meta-data)))
+          (when lic
+            (nixos--insert-field "License:"
+              (cond ((hash-table-p lic) (gethash "fullName" lic))
+                    ((stringp lic) lic)
+                    (t (nixos--value-to-string lic))))))
+        (let ((maint (gethash "maintainers" meta-data)))
+          (when (and maint (not (eq maint :null)))
+            (insert (propertize "Maintainers:" 'face 'bold) "\n")
+            (dolist (m (if (vectorp maint) (append maint nil) maint))
+              (when (hash-table-p m)
+                (insert "  " (or (gethash "name" m) "") "\n"))))))
+      ;; Footer hint
+      (when out-path
+        (insert "\n" (propertize "Press r to view requisites"
+                                 'face 'shadow) "\n"))
+      (goto-char (point-min))
+      (read-only-mode 1)
+      (set-buffer-modified-p nil))
+    (pop-to-buffer buf)))
 
 (defun nixos--package-meta (package-name)
-  "Fetch metadata for PACKAGE-NAME using `nix-instantiate'.
-Returns a JSON string, or nil if nix-instantiate is not
-available.
+  "Fetch metadata and outPath for PACKAGE-NAME using `nix-instantiate'.
+Returns an alist with keys `meta' (a hash table) and `outPath' (a
+string), or nil if nix-instantiate is not available.
 
 Results are memoized: since Nix store paths are immutable, the
 metadata for a given package is stable forever."
@@ -362,8 +470,13 @@ metadata for a given package is stable forever."
                              "--strict" "--json" "--eval"
                              "--argstr" "cand" package-name
                              "-E"
-                             "{cand}: (import <nixpkgs> {}).${cand}.meta"))
-          (buffer-string))))))
+                             (concat
+                              "{cand}: let pkg = (import <nixpkgs> {}).${cand};"
+                              " in { meta = pkg.meta; outPath = pkg.outPath; }")))
+          (goto-char (point-min))
+          (let-alist (json-parse-buffer)
+            (list (cons 'meta (and .meta (not (eq .meta :null)) .meta))
+                  (cons 'outPath .outPath))))))))
 
 
 ;;; Bookmarks
@@ -406,10 +519,7 @@ directly."
                                    #'nixos--option-collection))))
     (let ((data (gethash cand (nixos--options-load))))
       (if data
-          (nixos--display (format "*nixos-option %s*" cand)
-                          'option cand
-                          (json-serialize data)
-                          t)
+          (nixos--display-option cand data)
         (user-error "Option `%s' not found" cand)))))
 
 ;;;###autoload
@@ -419,27 +529,23 @@ When called interactively, prompt with completion.  When
 PACKAGE-NAME is provided non-interactively, display that package
 directly.
 
-Package metadata is obtained from `nix-instantiate' when
-available; otherwise the contents of `nixos-search-json-file' are
-shown."
+Package metadata (including the store path for requisites view)
+is obtained from `nix-instantiate' when available; otherwise the
+contents of `nixos-search-json-file' are shown."
   (interactive)
   (let ((cand (or package-name
                   (completing-read "nix-pkg> "
                                    #'nixos--package-collection))))
-    (let ((meta-json (nixos--package-meta cand)))
-      (if meta-json
-          (nixos--display (format "*nixos-package %s*" cand)
-                          'package cand
-                          meta-json
-                          t)
+    (let ((info (nixos--package-meta cand)))
+      (if info
+          (nixos--display-package cand info)
         ;; Fall back to the search JSON data.
         (let* ((full-key (concat "legacyPackages.x86_64-linux." cand))
                (data (gethash full-key (nixos--packages-load))))
           (if data
-              (nixos--display (format "*nixos-package %s*" cand)
-                              'package cand
-                              (json-serialize data)
-                              t)
+              (nixos--display-package
+               cand
+               (list (cons 'meta data)))
             (user-error "Package `%s' not found" cand)))))))
 
 

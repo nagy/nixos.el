@@ -241,7 +241,7 @@ attribute path (e.g. \"legacyPackages.x86_64-linux.foo\")."
       (nixos-test--options-hash
        '("services.foo.enable" :description "Enable foo"))
     (let ((displayed nil))
-      (cl-letf (((symbol-function 'switch-to-buffer)
+      (cl-letf (((symbol-function 'pop-to-buffer)
                  (lambda (buf) (setq displayed buf))))
         (nixos-option "services.foo.enable")
         (should displayed)
@@ -266,7 +266,7 @@ attribute path (e.g. \"legacyPackages.x86_64-linux.foo\")."
          :version "3.0"
          :description "process viewer"))
     (let ((displayed nil))
-      (cl-letf (((symbol-function 'switch-to-buffer)
+      (cl-letf (((symbol-function 'pop-to-buffer)
                  (lambda (buf) (setq displayed buf)))
                 ;; Ensure nix-instantiate doesn't run.
                 ((symbol-function 'nixos--package-meta)
@@ -364,7 +364,7 @@ attribute path (e.g. \"legacyPackages.x86_64-linux.foo\")."
       (nixos-test--options-hash
        '("services.foo.enable" :description "Enable foo"))
     (let ((buf-name nil))
-      (cl-letf (((symbol-function 'switch-to-buffer)
+      (cl-letf (((symbol-function 'pop-to-buffer)
                  (lambda (buf) (setq buf-name (buffer-name buf))
                    (set-buffer buf))))
         (nixos-option "services.foo.enable")
@@ -379,7 +379,7 @@ attribute path (e.g. \"legacyPackages.x86_64-linux.foo\")."
       (nixos-test--packages-hash
        '("legacyPackages.x86_64-linux.htop"
          :pname "htop" :description "viewer"))
-    (cl-letf (((symbol-function 'switch-to-buffer)
+    (cl-letf (((symbol-function 'pop-to-buffer)
                (lambda (buf) (set-buffer buf))))
       (nixos-package "htop")
       (should (eq major-mode 'nixos-browse-mode))
@@ -394,7 +394,7 @@ attribute path (e.g. \"legacyPackages.x86_64-linux.foo\")."
        '("services.foo.enable" :description "bar"))
     (let ((url-called nil)
           (url-arg nil))
-      (cl-letf (((symbol-function 'switch-to-buffer)
+      (cl-letf (((symbol-function 'pop-to-buffer)
                  (lambda (buf) (set-buffer buf)))
                 ((symbol-function 'browse-url)
                  (lambda (url) (setq url-called t url-arg url))))
@@ -413,7 +413,7 @@ attribute path (e.g. \"legacyPackages.x86_64-linux.foo\")."
          :pname "htop" :description "viewer"))
     (let ((url-called nil)
           (url-arg nil))
-      (cl-letf (((symbol-function 'switch-to-buffer)
+      (cl-letf (((symbol-function 'pop-to-buffer)
                  (lambda (buf) (set-buffer buf)))
                 ((symbol-function 'browse-url)
                  (lambda (url) (setq url-called t url-arg url))))
@@ -431,7 +431,7 @@ attribute path (e.g. \"legacyPackages.x86_64-linux.foo\")."
        '("services.foo.enable" :description "foo"))
     (let ((browse-buf nil)
           (refreshed nil))
-      (cl-letf (((symbol-function 'switch-to-buffer)
+      (cl-letf (((symbol-function 'pop-to-buffer)
                  (lambda (buf) (setq browse-buf buf) (set-buffer buf))))
         (nixos-option "services.foo.enable")
         (should (equal nixos--browse-name "services.foo.enable"))
@@ -450,7 +450,7 @@ attribute path (e.g. \"legacyPackages.x86_64-linux.foo\")."
   (nixos-test--with-options
       (nixos-test--options-hash
        '("services.foo.enable" :description "bar"))
-    (cl-letf (((symbol-function 'switch-to-buffer)
+    (cl-letf (((symbol-function 'pop-to-buffer)
                (lambda (buf) (set-buffer buf))))
       (nixos-option "services.foo.enable")
       (let ((rec (nixos--bookmark-make-record)))
@@ -466,7 +466,7 @@ attribute path (e.g. \"legacyPackages.x86_64-linux.foo\")."
       (nixos-test--options-hash
        '("services.foo.enable" :description "bar"))
     (let ((called-name nil))
-      (cl-letf (((symbol-function 'switch-to-buffer)
+      (cl-letf (((symbol-function 'pop-to-buffer)
                  (lambda (buf) (set-buffer buf)))
                 ((symbol-function 'nixos-option)
                  (lambda (name) (setq called-name name))))
@@ -481,7 +481,7 @@ attribute path (e.g. \"legacyPackages.x86_64-linux.foo\")."
        '("legacyPackages.x86_64-linux.htop"
          :pname "htop" :description "viewer"))
     (let ((called-name nil))
-      (cl-letf (((symbol-function 'switch-to-buffer)
+      (cl-letf (((symbol-function 'pop-to-buffer)
                  (lambda (buf) (set-buffer buf)))
                 ((symbol-function 'nixos-package)
                  (lambda (name) (setq called-name name))))
