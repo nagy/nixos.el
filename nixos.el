@@ -513,8 +513,10 @@ Add this to `nix-mode-hook' for automatic setup:
         (desc (or (nixos--slurp-description data) "")))
     (list name (vector name type desc))))
 
-(defun nixos-browse-options--entries ()
-  "Generate `tabulated-list-entries' for all NixOS options."
+(defun nixos-browse-options--entries (&optional name-list)
+  "Generate `tabulated-list-entries' for NixOS options.
+When NAME-LIST is non-nil, only include entries whose names
+appear in the list."
   (let ((options (nixos--options-load))
         entries)
     (if (= (hash-table-count options) 0)
@@ -522,7 +524,8 @@ Add this to `nix-mode-hook' for automatic setup:
          "No NixOS options loaded (check `nixos-options-json-file')")
       (maphash
        (lambda (key data)
-         (push (nixos-browse-options--entry key data) entries))
+         (when (or (null name-list) (member key name-list))
+           (push (nixos-browse-options--entry key data) entries)))
        options)
       (nreverse entries))))
 
@@ -549,8 +552,8 @@ Add this to `nix-mode-hook' for automatic setup:
   (tabulated-list-print t))
 
 ;;;###autoload
-(defun nixos-browse-options ()
-  "Display all NixOS options in a browseable table.
+(defun nixos-browse-options (&optional name-list)
+  "Display NixOS options in a browseable table.
 
 Options are shown with columns for name, type, and description.
 \<nixos-browse-options-mode-map>
@@ -558,13 +561,17 @@ Options are shown with columns for name, type, and description.
 \\[nixos-browse-options-search-url] to open on search.nixos.org,
 \\[nixos-browse-options-refresh] to reload the data.
 
+When NAME-LIST is non-nil (a list of option names), only those
+options are displayed.  This is used by Embark export.
+
 Emacs' built-in narrowing (\\[narrow-to-defun] etc.) can be used
 to filter the view in-place."
   (interactive)
   (let ((buf (get-buffer-create "*NixOS Options*")))
     (with-current-buffer buf
       (nixos-browse-options-mode)
-      (setq tabulated-list-entries (nixos-browse-options--entries))
+      (setq tabulated-list-entries
+            (nixos-browse-options--entries name-list))
       (tabulated-list-print))
     (switch-to-buffer buf)))
 
@@ -621,13 +628,155 @@ Shows the package version and description."
                         " "))
               (or desc "")))))
 
-(defvar marginalia-annotator-registry)
+(defvar marginalia-annotator-registry nil)
 
 (with-eval-after-load 'marginalia
   (add-to-list 'marginalia-annotator-registry
                '(nixos-option nixos--marginalia-option-annotator builtin none))
   (add-to-list 'marginalia-annotator-registry
                '(nixos-package nixos--marginalia-package-annotator builtin none)))
+
+
+;;; Package Browse Mode
+
+(defvar-keymap nixos-browse-packages-mode-map
+  :doc "Keymap for `nixos-browse-packages-mode'."
+  :parent tabulated-list-mode-map
+  "RET" #'nixos-browse-packages-visit
+  "b"   #'nixos-browse-packages-search-url
+  "g"   #'nixos-browse-packages-refresh)
+
+(define-derived-mode nixos-browse-packages-mode tabulated-list-mode
+  "NixOS-Packages"
+  "Major mode for browsing all Nix packages in a sortable table.
+
+\\{nixos-browse-packages-mode-map}"
+  (setq tabulated-list-format
+        [("Package" 40 t)
+         ("Version" 15 t)
+         ("Description" 0 nil)])
+  (setq tabulated-list-padding 2)
+  (setq tabulated-list-sort-key '("Package" . nil))
+  (tabulated-list-init-header)
+  (hl-line-mode 1))
+
+(defun nixos-browse-packages--entry (name data)
+  "Return a `tabulated-list' entry for package NAME with DATA."
+  (let ((version (or (gethash "version" data) ""))
+        (desc (or (nixos--slurp-description data) "")))
+    (list name (vector name version desc))))
+
+(defun nixos-browse-packages--entries (&optional name-list)
+  "Generate `tabulated-list-entries' for Nix packages.
+When NAME-LIST is non-nil, only include entries whose names
+appear in the list."
+  (let ((packages (nixos--packages-load))
+        entries)
+    (if (= (hash-table-count packages) 0)
+        (user-error
+         "No packages loaded (check `nixos-search-json-file')")
+      (maphash
+       (lambda (key data)
+         (let ((short (string-remove-prefix
+                       "legacyPackages.x86_64-linux." key)))
+           (when (or (null name-list) (member short name-list))
+             (push (nixos-browse-packages--entry short data) entries))))
+       packages)
+      (nreverse entries))))
+
+(defun nixos-browse-packages--current-name ()
+  "Return the package name at point, or signal an error."
+  (or (tabulated-list-get-id)
+      (user-error "No package on this line")))
+
+(defun nixos-browse-packages-visit ()
+  "Display details for the Nix package at point."
+  (interactive)
+  (nixos-package (nixos-browse-packages--current-name)))
+
+(defun nixos-browse-packages-search-url ()
+  "Open the current package on search.nixos.org."
+  (interactive)
+  (browse-url (format nixos-package-search-url-template
+                      (nixos-browse-packages--current-name))))
+
+(defun nixos-browse-packages-refresh ()
+  "Refresh the Nix packages table."
+  (interactive)
+  (setq tabulated-list-entries (nixos-browse-packages--entries))
+  (tabulated-list-print t))
+
+;;;###autoload
+(defun nixos-browse-packages (&optional name-list)
+  "Display Nix packages in a browseable table.
+
+Packages are shown with columns for name, version, and description.
+\<nixos-browse-packages-mode-map>
+\\[nixos-browse-packages-visit] on an entry to view full details,
+\\[nixos-browse-packages-search-url] to open on search.nixos.org,
+\\[nixos-browse-packages-refresh] to reload the data.
+
+When NAME-LIST is non-nil (a list of package names), only those
+packages are displayed.  This is used by Embark export."
+  (interactive)
+  (let ((buf (get-buffer-create "*Nix Packages*")))
+    (with-current-buffer buf
+      (nixos-browse-packages-mode)
+      (setq tabulated-list-entries
+            (nixos-browse-packages--entries name-list))
+      (tabulated-list-print))
+    (switch-to-buffer buf)))
+
+
+;;; Embark
+
+(defvar embark-exporters-alist nil)
+(defvar embark-keymap-alist nil)
+(defvar embark-general-map nil)
+
+(defun nixos--embark-export-option (candidates)
+  "Embark export function for NixOS option CANDIDATES."
+  (nixos-browse-options candidates))
+
+(defun nixos--embark-export-package (candidates)
+  "Embark export function for Nix package CANDIDATES."
+  (nixos-browse-packages candidates))
+
+(defun nixos--embark-browse-option-url (cand)
+  "Open CAND on search.nixos.org options."
+  (browse-url (format nixos-option-search-url-template cand)))
+
+(defun nixos--embark-browse-package-url (cand)
+  "Open CAND on search.nixos.org packages."
+  (browse-url (format nixos-package-search-url-template cand)))
+
+(defun nixos--embark-insert-option (cand)
+  "Insert CAND at point."
+  (insert cand))
+
+(defvar-keymap nixos-embark-option-map
+  :doc "Embark actions for NixOS option candidates."
+  :parent embark-general-map
+  "RET" #'nixos-option
+  "b"   #'nixos--embark-browse-option-url
+  "i"   #'nixos--embark-insert-option)
+
+(defvar-keymap nixos-embark-package-map
+  :doc "Embark actions for Nix package candidates."
+  :parent embark-general-map
+  "RET" #'nixos-package
+  "b"   #'nixos--embark-browse-package-url
+  "i"   #'nixos--embark-insert-option)
+
+(with-eval-after-load 'embark
+  (add-to-list 'embark-exporters-alist
+               '(nixos-option . nixos--embark-export-option))
+  (add-to-list 'embark-exporters-alist
+               '(nixos-package . nixos--embark-export-package))
+  (add-to-list 'embark-keymap-alist
+               '(nixos-option . nixos-embark-option-map))
+  (add-to-list 'embark-keymap-alist
+               '(nixos-package . nixos-embark-package-map)))
 
 (provide 'nixos)
 ;;; nixos.el ends here

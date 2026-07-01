@@ -628,5 +628,94 @@ attribute path (e.g. \"legacyPackages.x86_64-linux.foo\")."
       (should (string-match-p "3.3.0" ann))
       (should (string-match-p "process viewer" ann)))))
 
+
+;;; Package browse mode
+
+(ert-deftest nixos-browse-packages-entry ()
+  "`nixos-browse-packages--entry' returns a proper tabulated-list entry."
+  (let ((data (make-hash-table :test 'equal)))
+    (puthash "version" "3.3.0" data)
+    (puthash "description" "process viewer" data)
+    (let ((entry (nixos-browse-packages--entry "htop" data)))
+      (should (equal (car entry) "htop"))
+      (let ((cols (cadr entry)))
+        (should (equal (aref cols 0) "htop"))
+        (should (equal (aref cols 1) "3.3.0"))
+        (should (equal (aref cols 2) "process viewer"))))))
+
+(ert-deftest nixos-browse-packages-entries ()
+  "`nixos-browse-packages--entries' generates entries with short names."
+  (nixos-test--with-packages
+      (nixos-test--packages-hash
+       '("legacyPackages.x86_64-linux.htop"
+         :pname "htop" :version "3.0" :description "viewer")
+       '("legacyPackages.x86_64-linux.neovim"
+         :pname "neovim" :version "0.10" :description "editor"))
+    (let ((entries (nixos-browse-packages--entries)))
+      (should (= (length entries) 2))
+      (should (assoc "htop" entries))
+      (should (assoc "neovim" entries)))))
+
+(ert-deftest nixos-browse-packages-filter ()
+  "`nixos-browse-packages--entries' filters by name-list."
+  (nixos-test--with-packages
+      (nixos-test--packages-hash
+       '("legacyPackages.x86_64-linux.htop"
+         :pname "htop" :version "3.0" :description "viewer")
+       '("legacyPackages.x86_64-linux.neovim"
+         :pname "neovim" :version "0.10" :description "editor"))
+    (let ((entries (nixos-browse-packages--entries '("htop"))))
+      (should (= (length entries) 1))
+      (should (assoc "htop" entries)))))
+
+(ert-deftest nixos-browse-options-filter ()
+  "`nixos-browse-options--entries' filters by name-list."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable" :type "boolean" :description "foo")
+       '("services.bar.enable" :type "string" :description "bar"))
+    (let ((entries (nixos-browse-options--entries
+                    '("services.foo.enable"))))
+      (should (= (length entries) 1))
+      (should (assoc "services.foo.enable" entries)))))
+
+
+;;; Embark
+
+(ert-deftest nixos-embark-export-option ()
+  "Embark option export calls `nixos-browse-options' with candidates."
+  (let ((called nil))
+    (cl-letf (((symbol-function 'nixos-browse-options)
+               (lambda (names) (setq called names))))
+      (nixos--embark-export-option '("a" "b"))
+      (should (equal called '("a" "b"))))))
+
+(ert-deftest nixos-embark-export-package ()
+  "Embark package export calls `nixos-browse-packages' with candidates."
+  (let ((called nil))
+    (cl-letf (((symbol-function 'nixos-browse-packages)
+               (lambda (names) (setq called names))))
+      (nixos--embark-export-package '("htop" "neovim"))
+      (should (equal called '("htop" "neovim"))))))
+
+(ert-deftest nixos-embark-browse-urls ()
+  "Embark URL actions delegate to `browse-url'."
+  (let ((url-called nil))
+    (cl-letf (((symbol-function 'browse-url)
+               (lambda (url) (setq url-called url))))
+      (nixos--embark-browse-option-url "services.foo")
+      (should (string-match-p "services.foo" url-called))
+      (should (string-match-p "options" url-called))
+      (setq url-called nil)
+      (nixos--embark-browse-package-url "htop")
+      (should (string-match-p "htop" url-called))
+      (should (string-match-p "packages" url-called)))))
+
+(ert-deftest nixos-embark-insert ()
+  "`nixos--embark-insert-option' inserts the candidate at point."
+  (with-temp-buffer
+    (nixos--embark-insert-option "services.foo.enable")
+    (should (equal (buffer-string) "services.foo.enable"))))
+
 (provide 'nixos-tests)
 ;;; nixos-tests.el ends here
