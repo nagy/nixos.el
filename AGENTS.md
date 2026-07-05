@@ -96,3 +96,12 @@ should be pure where possible — makes them testable without mocking.
 | marginalia | soft | annotator registry |
 | embark | soft | export + actions |
 | evil / evil-collections | soft | see evil-collections — not bundled here |
+
+## TODO
+
+- **Batch package metadata** — `nixos--package-meta` evaluates
+  `nix-instantiate` per-package, importing `<nixpkgs>` each time.
+  Even with memoization, the first lookup for each package is slow.
+  Options: (a) evaluate multiple packages in a single Nix call,
+  (b) precompute a metadata JSON at build time (like options/search
+  already do).
