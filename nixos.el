@@ -177,11 +177,10 @@ Returns the cached hash table."
                          (json-parse-buffer))))
             (setq nixos--packages-cache table
                   nixos--packages-keys
-                  (sort (mapcar (lambda (k)
-                                  (string-remove-prefix
-                                   "legacyPackages.x86_64-linux." k))
-                                (hash-table-keys table))
-                        #'string<)))
+                  (mapcar (lambda (k)
+                            (string-remove-prefix
+                             "legacyPackages.x86_64-linux." k))
+                          (hash-table-keys table))))
         (setq nixos--packages-cache (make-hash-table :test 'equal)
               nixos--packages-keys nil))))
   nixos--packages-cache)
