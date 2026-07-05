@@ -426,6 +426,10 @@ INFO is an alist from `nixos--package-meta' with keys meta and outPath."
             (when lic
               (field "License:"
                      (cond ((hash-table-p lic) (gethash "fullName" lic))
+                           ((vectorp lic)
+                            (mapconcat (lambda (l)
+                                         (or (gethash "fullName" l) ""))
+                                       lic ", "))
                            ((stringp lic) lic)
                            (t (nixos--value-to-string lic))))))
           (let ((maint (gethash "maintainers" meta-data)))
