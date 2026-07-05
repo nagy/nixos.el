@@ -348,34 +348,36 @@ If VALUE is nil or empty, nothing is inserted after the label."
 
 (defun nixos--display-option (name data)
   "Create a formatted detail buffer for NixOS option NAME with DATA."
-  (let ((buf (generate-new-buffer (format "*nixos-option %s*" name))))
+  (let ((buf (get-buffer-create (format "*nixos-option %s*" name))))
     (with-current-buffer buf
-      (nixos-browse-mode)
-      (nixos--browse-setup 'option name)
-      ;; Title
-      (insert (propertize name 'face 'org-document-title) "\n\n")
-      ;; Fields
-      (cl-labels ((field (label value)
-                    (insert (propertize (format "%-14s" label) 'face 'bold))
-                    (when (and value (not (string-empty-p value)))
-                      (insert value))
-                    (insert "\n")))
-        (field "Type:" (gethash "type" data))
-        (let ((def (nixos--value-to-string (gethash "default" data))))
-          (field "Default:" def))
-        (let ((desc (gethash "description" data)))
-          (when (and desc (not (eq desc :null)))
-            (field "Description:" desc)))
-        (let ((example (nixos--value-to-string (gethash "example" data))))
-          (field "Example:" example))
-        (let ((decls (gethash "declarations" data)))
-          (when (and decls (not (eq decls :null)))
-            (field "Declared by:" nil)
-            (dolist (d (if (vectorp decls) (append decls nil) decls))
-              (insert "  " d "\n")))))
-      (goto-char (point-min))
-      (read-only-mode 1)
-      (set-buffer-modified-p nil))
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (nixos-browse-mode)
+        (nixos--browse-setup 'option name)
+        ;; Title
+        (insert (propertize name 'face 'org-document-title) "\n\n")
+        ;; Fields
+        (cl-labels ((field (label value)
+                      (insert (propertize (format "%-14s" label) 'face 'bold))
+                      (when (and value (not (string-empty-p value)))
+                        (insert value))
+                      (insert "\n")))
+          (field "Type:" (gethash "type" data))
+          (let ((def (nixos--value-to-string (gethash "default" data))))
+            (field "Default:" def))
+          (let ((desc (gethash "description" data)))
+            (when (and desc (not (eq desc :null)))
+              (field "Description:" desc)))
+          (let ((example (nixos--value-to-string (gethash "example" data))))
+            (field "Example:" example))
+          (let ((decls (gethash "declarations" data)))
+            (when (and decls (not (eq decls :null)))
+              (field "Declared by:" nil)
+              (dolist (d (if (vectorp decls) (append decls nil) decls))
+                (insert "  " d "\n")))))
+        (goto-char (point-min))
+        (read-only-mode 1)
+        (set-buffer-modified-p nil)))
     (pop-to-buffer buf)))
 
 (defun nixos--display-package (name info)
@@ -383,68 +385,70 @@ If VALUE is nil or empty, nothing is inserted after the label."
 INFO is an alist from `nixos--package-meta' with keys meta and outPath."
   (let ((meta-data (alist-get 'meta info))
         (out-path (alist-get 'outPath info))
-        (buf (generate-new-buffer (format "*nixos-package %s*" name))))
+        (buf (get-buffer-create (format "*nixos-package %s*" name))))
     (with-current-buffer buf
-      (nixos-browse-mode)
-      (nixos--browse-setup 'package name out-path)
-      ;; Title
-      (insert (propertize name 'face 'org-document-title) "\n\n")
-      (cl-labels ((field (label value)
-                    (insert (propertize (format "%-14s" label) 'face 'bold))
-                    (when (and value (not (string-empty-p value)))
-                      (insert value))
-                    (insert "\n"))
-                  (link (label url)
-                    (insert (propertize (format "%-14s" label) 'face 'bold))
-                    (when url
-                      (insert (propertize url
-                                          'face 'link
-                                          'mouse-face 'highlight
-                                          'help-echo url)))
-                    (insert "\n")))
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (nixos-browse-mode)
+        (nixos--browse-setup 'package name out-path)
+        ;; Title
+        (insert (propertize name 'face 'org-document-title) "\n\n")
+        (cl-labels ((field (label value)
+                      (insert (propertize (format "%-14s" label) 'face 'bold))
+                      (when (and value (not (string-empty-p value)))
+                        (insert value))
+                      (insert "\n"))
+                    (link (label url)
+                      (insert (propertize (format "%-14s" label) 'face 'bold))
+                      (when url
+                        (insert (propertize url
+                                            'face 'link
+                                            'mouse-face 'highlight
+                                            'help-echo url)))
+                      (insert "\n")))
+          (when out-path
+            (field "Store path:"
+                   (propertize out-path
+                               'face (cond ((file-directory-p out-path)
+                                            'dired-directory)
+                                           ((file-exists-p out-path) nil)
+                                           (t 'error))))
+            (if (file-directory-p out-path)
+                (cd out-path)
+              (cd temporary-file-directory)))
+          ;; Meta fields (hash table from parsed JSON)
+          (when meta-data
+            (let ((desc (gethash "description" meta-data)))
+              (when (and desc (not (eq desc :null)))
+                (field "Description:" desc)))
+            (field "Version:" (or (gethash "version" meta-data)
+                                  (alist-get 'version info)))
+            (let ((hp (gethash "homepage" meta-data)))
+              (when (and hp (not (eq hp :null)))
+                (link "Homepage:" hp)))
+            (let ((lic (gethash "license" meta-data)))
+              (when lic
+                (field "License:"
+                       (cond ((hash-table-p lic) (gethash "fullName" lic))
+                             ((vectorp lic)
+                              (mapconcat (lambda (l)
+                                           (or (gethash "fullName" l) ""))
+                                         lic ", "))
+                             ((stringp lic) lic)
+                             (t (nixos--value-to-string lic))))))
+            (let ((maint (gethash "maintainers" meta-data)))
+              (when (and maint (not (eq maint :null)))
+                (field "Maintainers:" nil)
+                (dolist (m (if (vectorp maint) (append maint nil) maint))
+                  (when (hash-table-p m)
+                    (insert "  " (or (gethash "name" m) "") "\n")))))))
+        ;; Footer hint
         (when out-path
-          (field "Store path:"
-                 (propertize out-path
-                             'face (cond ((file-directory-p out-path)
-                                          'dired-directory)
-                                         ((file-exists-p out-path) nil)
-                                         (t 'error))))
-          (if (file-directory-p out-path)
-              (cd out-path)
-            (cd temporary-file-directory)))
-        ;; Meta fields (hash table from parsed JSON)
-        (when meta-data
-          (let ((desc (gethash "description" meta-data)))
-            (when (and desc (not (eq desc :null)))
-              (field "Description:" desc)))
-          (field "Version:" (or (gethash "version" meta-data)
-                                (alist-get 'version info)))
-          (let ((hp (gethash "homepage" meta-data)))
-            (when (and hp (not (eq hp :null)))
-              (link "Homepage:" hp)))
-          (let ((lic (gethash "license" meta-data)))
-            (when lic
-              (field "License:"
-                     (cond ((hash-table-p lic) (gethash "fullName" lic))
-                           ((vectorp lic)
-                            (mapconcat (lambda (l)
-                                         (or (gethash "fullName" l) ""))
-                                       lic ", "))
-                           ((stringp lic) lic)
-                           (t (nixos--value-to-string lic))))))
-          (let ((maint (gethash "maintainers" meta-data)))
-            (when (and maint (not (eq maint :null)))
-              (field "Maintainers:" nil)
-              (dolist (m (if (vectorp maint) (append maint nil) maint))
-                (when (hash-table-p m)
-                  (insert "  " (or (gethash "name" m) "") "\n")))))))
-      ;; Footer hint
-      (when out-path
-        (insert "\n" (propertize "Press r to view requisites"
-                                 'face 'shadow) "\n"))
-      (goto-char (point-min))
-      (read-only-mode 1)
-      (set-buffer-modified-p nil))
+          (insert "\n" (propertize "Press r to view requisites"
+                                   'face 'shadow) "\n"))
+        (goto-char (point-min))
+        (read-only-mode 1)
+        (set-buffer-modified-p nil)))
     (pop-to-buffer buf)))
 
 (defun nixos--package-meta (package-name)
