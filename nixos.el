@@ -394,7 +394,10 @@ INFO is an alist from `nixos--package-meta' with keys meta and outPath."
       (insert (propertize name 'face 'org-document-title) "\n\n")
       (when out-path
         (insert (propertize "Store path:" 'face 'bold)
-                "  " out-path "\n"))
+                "  " out-path "\n")
+        (if (file-directory-p out-path)
+            (cd out-path)
+          (cd temporary-file-directory)))
       ;; Meta fields (hash table from parsed JSON)
       (when meta-data
         (let ((desc (gethash "description" meta-data)))
