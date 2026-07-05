@@ -445,11 +445,16 @@ metadata for a given package is stable forever."
                              "-E"
                              (concat
                               "{cand}: let pkg = (import <nixpkgs> {}).${cand};"
-                              " in { meta = pkg.meta; outPath = pkg.outPath; }")))
+                              " in [ pkg.meta pkg.outPath ]")))
           (goto-char (point-min))
-          (let-alist (json-parse-buffer)
-            (list (cons 'meta (and .meta (not (eq .meta :null)) .meta))
-                  (cons 'outPath .outPath))))))))
+          (let ((result (json-parse-buffer)))
+            ;; result is [meta outPath], a vector.
+            ;; An attrset {meta=…; outPath=…} would
+            ;; collapse to the derivation's store path.
+            (let ((meta (and (vectorp result) (aref result 0)))
+                  (out (and (vectorp result) (aref result 1))))
+              (list (cons 'meta (and meta (not (eq meta :null)) meta))
+                    (cons 'outPath (and out (not (eq out :null)) out))))))))))
 
 
 ;;; Bookmarks

@@ -265,6 +265,48 @@ attribute path (e.g. \"legacyPackages.x86_64-linux.foo\")."
           (should (string-match-p "htop" (buffer-string))))
         (kill-buffer displayed)))))
 
+(ert-deftest nixos-package-noninteractive-with-meta ()
+  "`nixos-package' displays package metadata when `nixos--package-meta' succeeds."
+  (nixos-test--with-packages
+      (nixos-test--packages-hash
+       '("legacyPackages.x86_64-linux.htop"
+         :pname "htop" :version "3.5.1" :description "process viewer"))
+    (let ((displayed nil)
+          (meta-ht (make-hash-table :test 'equal)))
+      (puthash "description" "Interactive process viewer" meta-ht)
+      (puthash "version" "3.5.1" meta-ht)
+      (puthash "homepage" "https://htop.dev/" meta-ht)
+      (cl-letf (((symbol-function 'pop-to-buffer)
+                 (lambda (buf) (setq displayed buf)))
+                ;; Mock nixos--package-meta to return metadata with outPath.
+                ((symbol-function 'nixos--package-meta)
+                 (lambda (_)
+                   (list (cons 'meta meta-ht)
+                         (cons 'outPath
+                               "/nix/store/fmnh7ka0srnsnh7ccykyb0ml548d14hl-htop-3.5.1")))))
+        (nixos-package "htop")
+        (should displayed)
+        (should (buffer-live-p displayed))
+        (with-current-buffer displayed
+          (let ((content (buffer-string)))
+            ;; Title
+            (should (string-match-p "htop" content))
+            ;; Store path is displayed
+            (should (string-match-p "Store path:" content))
+            (should (string-match-p "fmnh7ka0srnsnh7ccykyb0ml548d14hl-htop-3.5.1" content))
+            ;; Description
+            (should (string-match-p "Interactive process viewer" content))
+            ;; Version
+            (should (string-match-p "3.5.1" content))
+            ;; Homepage
+            (should (string-match-p "https://htop.dev/" content))
+            ;; Browse metadata is set
+            (should (eq nixos--browse-type 'package))
+            (should (equal nixos--browse-name "htop"))
+            (should (equal nixos--browse-out-path
+                          "/nix/store/fmnh7ka0srnsnh7ccykyb0ml548d14hl-htop-3.5.1"))))
+        (kill-buffer displayed)))))
+
 (ert-deftest nixos-package-noninteractive-missing ()
   "`nixos-package' signals an error for a missing package."
   (nixos-test--with-packages
@@ -710,33 +752,44 @@ attribute path (e.g. \"legacyPackages.x86_64-linux.foo\")."
 ;;; Memoization
 
 (ert-deftest nixos-package-meta-memoized ()
-  "`with-memoization' using `gethash' caches results correctly."
-  (let* ((h (make-hash-table :test 'equal))
-         (compute-count 0))
-    (cl-labels ((costly-computation ()
-                  (cl-incf compute-count)
-                  (format "data-%d" compute-count)))
-      ;; First call: compute.
-      (should (equal (with-memoization (gethash "a" h) (costly-computation))
-                     "data-1"))
-      (should (= compute-count 1))
-      ;; Second call: cached.
-      (should (equal (with-memoization (gethash "a" h) (costly-computation))
-                     "data-1"))
-      (should (= compute-count 1))
-      ;; Different key: fresh compute.
-      (should (equal (with-memoization (gethash "b" h) (costly-computation))
-                     "data-2"))
-      (should (= compute-count 2))
-      ;; Nil results are NOT cached (retry each time).
-      (let ((retry-count 0))
-        (should-not (with-memoization (gethash "c" h)
-                      (cl-incf retry-count)
-                      nil))
-        (should-not (with-memoization (gethash "c" h)
-                      (cl-incf retry-count)
-                      nil))
-        (should (= retry-count 2))))))
+  "`nixos--package-meta' memoizes per-package and distinguishes keys."
+  ;; Simulate nix-instantiate by mocking call-process.
+  (let ((nixos--package-meta-cache nil)
+        (call-count 0))
+    (setq nix-instantiate-executable "nix-instantiate")
+    (cl-letf (((symbol-function 'call-process)
+               (lambda (program _infile _dest _display &rest args)
+                 (setq call-count (1+ call-count))
+                 (let ((package-name (nth 5 args)))
+                   (insert
+                    (if (string= package-name "htop")
+                        "[{\"description\":\"htop viewer\",\"version\":\"3.5.1\"},\"/nix/store/htop-path\"]"
+                      "[{\"description\":\"neovim editor\",\"version\":\"0.10\"},\"/nix/store/neovim-path\"]"))
+                   0))))
+      (unwind-protect
+          (progn
+            ;; First call: htop, should compute.
+            (let ((result (nixos--package-meta "htop")))
+              (should result)
+              (should (hash-table-p (alist-get 'meta result)))
+              (should (equal (alist-get 'outPath result) "/nix/store/htop-path"))
+              (should (= call-count 1)))
+            ;; Second call: htop again, should be cached.
+            (let ((result (nixos--package-meta "htop")))
+              (should result)
+              (should (equal (alist-get 'outPath result) "/nix/store/htop-path"))
+              (should (= call-count 1)))
+            ;; Third call: neovim, should compute fresh (different key).
+            (let ((result (nixos--package-meta "neovim")))
+              (should result)
+              (should (equal (alist-get 'outPath result) "/nix/store/neovim-path"))
+              (should (= call-count 2)))
+            ;; Fourth call: neovim cached.
+            (let ((result (nixos--package-meta "neovim")))
+              (should result)
+              (should (equal (alist-get 'outPath result) "/nix/store/neovim-path"))
+              (should (= call-count 2))))
+        (setq nix-instantiate-executable nil)))))
 
 (ert-deftest nixos-package-meta-cache-cleared ()
   "`nixos-refresh-cache' clears the package meta cache."

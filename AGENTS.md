@@ -67,6 +67,40 @@ are intentionally NOT cached — transient failures retry.
   expensive-computation...)
 ```
 
+### Avoid `let-alist` on hash tables
+
+`let-alist` expands to `(cdr (assq …))` — it works only on alists.
+`json-parse-buffer` returns hash tables (the default).  Use
+`gethash` directly when the source is a hash table.
+
+```elisp
+;; Wrong — json-parse-buffer returns a hash table, not an alist
+(let-alist (json-parse-buffer) …)
+
+;; Correct
+(let ((result (json-parse-buffer)))
+  (gethash "key" result) …)
+```
+
+### Nix expression gotcha: attrset with meta + outPath
+
+When calling `nix-instantiate --strict --json --eval`, never
+construct an attrset mixing `pkg.meta` (attrset) with `pkg.outPath`
+(string with derivation context):
+
+```nix
+# Wrong — Nix collapses the attrset to just the derivation's store path
+{ meta = pkg.meta; outPath = pkg.outPath; }
+
+# Correct — output a JSON array instead
+[ pkg.meta pkg.outPath ]
+```
+
+This is because `pkg.outPath` carries string context from the
+derivation, and when combined with `pkg.meta` in one attrset, Nix
+recognizes the pattern and returns the derivation itself, which
+`--strict` forces to its output path.
+
 ### Tabulated-list conventions
 
 - Entry format: `(id [id col1 col2...])`
@@ -82,10 +116,18 @@ are intentionally NOT cached — transient failures retry.
   converted to strings by stripping the leading colon.
 - `nixos-test--with-options` / `nixos-test--with-packages` macros
   bind the cache vars directly (no JSON file needed).
-- Mock `switch-to-buffer` with `cl-letf` to test display without UI.
+- Mock `switch-to-buffer` / `pop-to-buffer` with `cl-letf` to test
+  display without UI.
 - Mock `nixos--package-meta` or `browse-url` when side-effects are
   undesirable.
+- Mock `call-process` to simulate `nix-instantiate` output when
+  testing `nixos--package-meta` directly.  Use the JSON array
+  format `[{…},"store-path"]` (see Nix expression gotcha above).
 - Tests that need `nix-mode` use `(skip-unless (fboundp 'nix-mode))`.
+- When testing `nixos--package-meta` memoization without loading
+  `nix-mode`, use `(setq nix-instantiate-executable "nix-instantiate")`
+  — `defvar` alone leaves it void, and `let` creates a lexical binding
+  in `lexical-binding: t` files, invisible to `boundp`.
 
 ### Functional purity
 
