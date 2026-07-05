@@ -138,9 +138,9 @@ keys like pname, version, description, etc.")
 
 (defvar nixos--package-meta-cache nil
   "Hash table memoizing `nixos--package-meta' results.
-Keys are package names, values are JSON strings.
-Memozied because nix store paths are immutable — the metadata
-for a given package name never changes.")
+Keys are package names, values are alists with keys `meta' and
+`outPath'.  Memoized because nix store paths are immutable —
+the metadata for a given package name never changes.")
 
 (defun nixos--options-load ()
   "Load NixOS options from `nixos-options-json-file' into cache.
@@ -302,8 +302,8 @@ This shows requisites, references, derivers, etc."
    ((eq value :null) nil)
    ((stringp value) value)
    ((numberp value) (number-to-string value))
-   ((eq value t) "true")
-   ((eq value :json-false) "false")
+   ((memq value '(t :json-false))
+    (if (eq value t) "true" "false"))
    ((or (hash-table-p value) (vectorp value))
     (json-serialize value))
    (t (prin1-to-string value))))
@@ -798,23 +798,19 @@ Shows the package version and description."
   "Open CAND on search.nixos.org packages."
   (browse-url (format nixos-package-search-url-template cand)))
 
-(defun nixos--embark-insert-option (cand)
-  "Insert CAND at point."
-  (insert cand))
-
 (defvar-keymap nixos-embark-option-map
   :doc "Embark actions for NixOS option candidates."
   :parent embark-general-map
   "RET" #'nixos-option
   "b"   #'nixos--embark-browse-option-url
-  "i"   #'nixos--embark-insert-option)
+  "i"   #'insert)
 
 (defvar-keymap nixos-embark-package-map
   :doc "Embark actions for Nix package candidates."
   :parent embark-general-map
   "RET" #'nixos-package
   "b"   #'nixos--embark-browse-package-url
-  "i"   #'nixos--embark-insert-option)
+  "i"   #'insert)
 
 (with-eval-after-load 'embark
   (add-to-list 'embark-exporters-alist

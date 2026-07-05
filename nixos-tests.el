@@ -31,9 +31,10 @@
 ;;; Helpers
 
 (cl-defun nixos-test--options-hash (&rest entries)
-  "Build a hash table of mock NixOS options.
+  "Build a hash table of mock NixOS options or Nix packages.
 ENTRIES are (KEY . PLIST) pairs where PLIST is a flat plist
-containing at least :description."
+containing at least :description.  Keyword keys (:foo) are
+converted to strings by stripping the leading colon."
   (let ((table (make-hash-table :test 'equal)))
     (dolist (e entries table)
       (let ((inner (make-hash-table :test 'equal)))
@@ -41,16 +42,7 @@ containing at least :description."
                  do (puthash (substring (symbol-name prop) 1) val inner))
         (puthash (car e) inner table)))))
 
-(cl-defun nixos-test--packages-hash (&rest entries)
-  "Build a hash table of mock Nix packages.
-ENTRIES are (KEY . PLIST) pairs.  The KEY should be the full
-attribute path (e.g. \"legacyPackages.x86_64-linux.foo\")."
-  (let ((table (make-hash-table :test 'equal)))
-    (dolist (e entries table)
-      (let ((inner (make-hash-table :test 'equal)))
-        (cl-loop for (prop val) on (cdr e) by #'cddr
-                 do (puthash (substring (symbol-name prop) 1) val inner))
-        (puthash (car e) inner table)))))
+(defalias 'nixos-test--packages-hash #'nixos-test--options-hash)
 
 (defmacro nixos-test--with-options (options &rest body)
   "Evaluate BODY with `nixos--options-cache' bound to OPTIONS."
@@ -741,13 +733,6 @@ attribute path (e.g. \"legacyPackages.x86_64-linux.foo\")."
       (nixos--embark-browse-package-url "htop")
       (should (string-match-p "htop" url-called))
       (should (string-match-p "packages" url-called)))))
-
-(ert-deftest nixos-embark-insert ()
-  "`nixos--embark-insert-option' inserts the candidate at point."
-  (with-temp-buffer
-    (nixos--embark-insert-option "services.foo.enable")
-    (should (equal (buffer-string) "services.foo.enable"))))
-
 
 ;;; Memoization
 
