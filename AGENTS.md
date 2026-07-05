@@ -46,10 +46,15 @@ variable, so `symbol-value` still errors.
 
 ### Build-time data baking
 
-`defcustom` defaults use `@nixosOptionsJson@` / `@nixosSearchJson@`
-placeholders.  `default.nix` substitutes them via `substituteInPlace`
-in `postPatch`.  `nixos--resolve-path` falls back to `/etc/` paths
-when placeholders are unsubstituted (e.g. no Nix build).
+`defcustom` defaults (`nixos-options-json-file`, `nixos-search-json-file`)
+point to `/etc/` paths.  `default.nix` substitutes them with Nix
+store paths via `substituteInPlace` in `postPatch`.
+
+`nixosOptionsJson` defaults to evaluating an empty NixOS
+configuration to extract the options JSON from the manual build.
+This derivation hits the NixOS binary cache, so no local build
+is needed on a hit.  Pass `nixosOptionsJson = "/etc/nixos-options.json"`
+to skip the eval.
 
 ### Memoization
 

@@ -329,7 +329,7 @@ If VALUE is nil or empty, nothing is inserted after the label."
   (insert (propertize label 'face 'bold))
   (when url
     (insert "  " (propertize url 'mouse-face 'highlight
-                              'help-echo url)))
+                             'help-echo url)))
   (insert "\n"))
 
 (defun nixos-browse-search-url ()
@@ -407,9 +407,9 @@ INFO is an alist from `nixos--package-meta' with keys meta and outPath."
         (let ((lic (gethash "license" meta-data)))
           (when lic
             (nixos--insert-field "License:"
-              (cond ((hash-table-p lic) (gethash "fullName" lic))
-                    ((stringp lic) lic)
-                    (t (nixos--value-to-string lic))))))
+                                 (cond ((hash-table-p lic) (gethash "fullName" lic))
+                                       ((stringp lic) lic)
+                                       (t (nixos--value-to-string lic))))))
         (let ((maint (gethash "maintainers" meta-data)))
           (when (and maint (not (eq maint :null)))
             (insert (propertize "Maintainers:" 'face 'bold) "\n")
