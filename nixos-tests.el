@@ -748,8 +748,8 @@ converted to strings by stripping the leading colon."
                  (let ((package-name (nth 5 args)))
                    (insert
                     (if (string= package-name "htop")
-                        "[{\"description\":\"htop viewer\",\"version\":\"3.5.1\"},\"/nix/store/htop-path\"]"
-                      "[{\"description\":\"neovim editor\",\"version\":\"0.10\"},\"/nix/store/neovim-path\"]"))
+                        "[{\"description\":\"htop viewer\",\"version\":\"3.5.1\"},\"/nix/store/htop-path\",\"3.5.1\"]"
+                      "[{\"description\":\"neovim editor\",\"version\":\"0.10\"},\"/nix/store/neovim-path\",\"0.10\"]"))
                    0))))
       (unwind-protect
           (progn

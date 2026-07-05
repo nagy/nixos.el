@@ -417,7 +417,8 @@ INFO is an alist from `nixos--package-meta' with keys meta and outPath."
           (let ((desc (gethash "description" meta-data)))
             (when (and desc (not (eq desc :null)))
               (field "Description:" desc)))
-          (field "Version:" (gethash "version" meta-data))
+          (field "Version:" (or (gethash "version" meta-data)
+                                (alist-get 'version info)))
           (let ((hp (gethash "homepage" meta-data)))
             (when (and hp (not (eq hp :null)))
               (link "Homepage:" hp)))
@@ -462,16 +463,18 @@ metadata for a given package is stable forever."
                              "-E"
                              (concat
                               "{cand}: let pkg = (import <nixpkgs> {}).${cand};"
-                              " in [ pkg.meta pkg.outPath ]")))
+                              " in [ pkg.meta pkg.outPath pkg.version ]")))
           (goto-char (point-min))
           (let ((result (json-parse-buffer)))
-            ;; result is [meta outPath], a vector.
+            ;; result is [meta outPath version], a vector.
             ;; An attrset {meta=…; outPath=…} would
             ;; collapse to the derivation's store path.
-            (let ((meta (and (vectorp result) (aref result 0)))
-                  (out (and (vectorp result) (aref result 1))))
+            (let ((meta (and (vectorp result) (>= (length result) 1) (aref result 0)))
+                  (out (and (vectorp result) (>= (length result) 2) (aref result 1)))
+                  (ver (and (vectorp result) (>= (length result) 3) (aref result 2))))
               (list (cons 'meta (and meta (not (eq meta :null)) meta))
-                    (cons 'outPath (and out (not (eq out :null)) out))))))))))
+                    (cons 'outPath (and out (not (eq out :null)) out))
+                    (cons 'version (and ver (not (eq ver :null)) ver))))))))))
 
 
 ;;; Bookmarks
