@@ -74,19 +74,6 @@ attribute path (e.g. \"legacyPackages.x86_64-linux.foo\")."
 
 ;;; Unit tests
 
-(ert-deftest nixos-hash-ref-shallow ()
-  "Single-key lookup with `nixos--hash-ref'."
-  (let ((table (nixos-test--options-hash
-                '("foo" :description "a foo option"))))
-    (let ((inner (nixos--hash-ref table "foo")))
-      (should (hash-table-p inner))
-      (should (equal (gethash "description" inner) "a foo option")))))
-
-(ert-deftest nixos-hash-ref-missing-key ()
-  "`nixos--hash-ref' returns nil for missing keys."
-  (let ((table (make-hash-table :test 'equal)))
-    (should-not (nixos--hash-ref table "nonexistent"))))
-
 (ert-deftest nixos-slurp-description-from-hash ()
   "`nixos--slurp-description' extracts description from a hash table."
   (let ((inner (make-hash-table :test 'equal)))

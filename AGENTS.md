@@ -23,9 +23,9 @@ Single file (`nixos.el`), sections roughly:
 
 1. defgroup / defcustom
 2. Cache (hash-table vars, load functions, `nixos-refresh-cache`)
-3. Helpers (`nixos--hash-ref`, `nixos--slurp-description`)
+3. Helpers (`nixos--slurp-description`)
 4. Options / Packages collection + annotation
-5. Browse modes (nixos-browse-mode, browse-options, browse-packages)
+5. Browse modes (`nixos-browse-mode`, `nixos--define-browse-mode` macro for browse-options/packages)
 6. Bookmarks, thingatpt, eldoc
 7. Marginalia annotators, Embark export + actions
 

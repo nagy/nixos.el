@@ -65,6 +65,7 @@
 
 (require 'json)
 (require 'thingatpt)
+(require 'cl-lib)
 
 ;; Forward-declare; nix-mode is optional at compile time.
 (defvar nix-instantiate-executable)
@@ -199,25 +200,10 @@ from the JSON files."
 
 ;;; Helpers
 
-(defun nixos--hash-ref (table &rest keys)
-  "Look up KEYS recursively in TABLE.
-Each key in KEYS is used with `gethash' to descend one level."
-  (let ((cursor table))
-    (while (and cursor keys)
-      (setq cursor (gethash (car keys) cursor)
-            keys (cdr keys)))
-    cursor))
-
 (defun nixos--slurp-description (inner)
-  "Extract a one-line description string from INNER (a hash table or alist)."
-  (let ((desc (cond
-               ((hash-table-p inner) (gethash "description" inner))
-               ((consp inner) (alist-get 'description inner nil nil #'equal))
-               (t nil)))
-        (pname (cond
-                ((hash-table-p inner) (gethash "pname" inner))
-                ((consp inner) (alist-get 'pname inner nil nil #'equal))
-                (t nil))))
+  "Extract a one-line description string from INNER (a hash table)."
+  (let ((desc (and (hash-table-p inner) (gethash "description" inner)))
+        (pname (and (hash-table-p inner) (gethash "pname" inner))))
     (or desc pname "")))
 
 (defun nixos--annotate (description)
@@ -577,11 +563,11 @@ identifier like \"services.postgresql.enable\"."
            start end)
       (save-excursion
         ;; Scan backward to the start.
-        (skip-chars-backward "A-Za-z0-9_-'.")
+        (skip-chars-backward "-A-Za-z0-9_'.")
         (setq start (point))
         ;; Scan forward to the end.
         (goto-char p)
-        (skip-chars-forward "A-Za-z0-9_-'.")
+        (skip-chars-forward "-A-Za-z0-9_'.")
         (setq end (point))
         (when (and (> end start)
                    (string-match-p nixos--dotted-identifier-re
@@ -603,96 +589,123 @@ Add this to `nix-mode-hook' for automatic setup:
                     thing-at-point-provider-alist)))
 
 
-;;; Tabulated Browse Mode
+;;; Tabulated Browse Mode (shared macro)
 
-(defvar-keymap nixos-browse-options-mode-map
-  :doc "Keymap for `nixos-browse-options-mode'."
-  :parent tabulated-list-mode-map
-  "RET" #'nixos-browse-options-visit
-  "b"   #'nixos-browse-options-search-url
-  "g"   #'nixos-browse-options-refresh)
+(cl-defmacro nixos--define-browse-mode (type &key mode-label buffer-name
+                                             columns sort-key
+                                             extract-fields
+                                             visit-fn url-fmt
+                                             cache-fn key-fn)
+  "Define a tabulated-list browse mode for TYPE (a symbol, e.g. option).
+Internal use only."
+  (declare (indent 1))
+  (let* ((typestr (symbol-name type))
+         (mode (intern (format "nixos-browse-%ss-mode" typestr)))
+         (mode-map (intern (format "nixos-browse-%ss-mode-map" typestr)))
+         (visit (intern (format "nixos-browse-%ss-visit" typestr)))
+         (search-url (intern (format "nixos-browse-%ss-search-url" typestr)))
+         (refresh (intern (format "nixos-browse-%ss-refresh" typestr)))
+         (cmd (intern (format "nixos-browse-%ss" typestr)))
+         (entry-fn (intern (format "nixos-browse-%ss--entry" typestr)))
+         (entries-fn (intern (format "nixos-browse-%ss--entries" typestr)))
+         (current-name-fn (intern (format "nixos-browse-%ss--current-name" typestr))))
+    `(progn
+       (defvar-keymap ,mode-map
+         :doc ,(format "Keymap for `%s'." mode)
+         :parent tabulated-list-mode-map
+         "RET" #',visit
+         "b"   #',search-url
+         "g"   #',refresh)
 
-(define-derived-mode nixos-browse-options-mode tabulated-list-mode
-  "NixOS-Options"
-  "Major mode for browsing all NixOS options in a sortable table.
+       (define-derived-mode ,mode tabulated-list-mode
+         ,mode-label
+         ,(format "Major mode for browsing Nix %s in a sortable table.
 
-\\{nixos-browse-options-mode-map}"
-  (setq tabulated-list-format
-        [("Option" 50 t)
-         ("Type" 20 t)
-         ("Description" 0 nil)])
-  (setq tabulated-list-padding 2)
-  (setq tabulated-list-sort-key '("Option" . nil))
-  (tabulated-list-init-header)
-  (hl-line-mode 1))
+\\{%s}" typestr mode-map)
+         (setq tabulated-list-format ,columns)
+         (setq tabulated-list-padding 2)
+         (setq tabulated-list-sort-key ',sort-key)
+         (tabulated-list-init-header)
+         (hl-line-mode 1))
 
-(defun nixos-browse-options--entry (name data)
-  "Return a `tabulated-list' entry for option NAME with DATA."
-  (let ((type (or (gethash "type" data) ""))
-        (desc (or (nixos--slurp-description data) "")))
-    (list name (vector name type desc))))
+       (defun ,entry-fn (name data)
+         ,(format "Return a `tabulated-list' entry for %s NAME with DATA." typestr)
+         (list name (vector name ,@extract-fields)))
 
-(defun nixos-browse-options--entries (&optional name-list)
-  "Generate `tabulated-list-entries' for NixOS options.
+       (defun ,entries-fn (&optional name-list)
+         ,(format "Generate `tabulated-list-entries' for %s.
 When NAME-LIST is non-nil, only include entries whose names
-appear in the list."
-  (let ((options (nixos--options-load))
-        entries)
-    (if (= (hash-table-count options) 0)
-        (user-error
-         "No NixOS options loaded (check `nixos-options-json-file')")
-      (maphash
-       (lambda (key data)
-         (when (or (null name-list) (member key name-list))
-           (push (nixos-browse-options--entry key data) entries)))
-       options)
-      (nreverse entries))))
+appear in the list." typestr)
+         (let ((items (,cache-fn))
+               entries)
+           (if (= (hash-table-count items) 0)
+               (user-error "No %s loaded (check the JSON file)" ,typestr)
+             (maphash
+              (lambda (raw-key data)
+                (let ((name ,(if key-fn `(funcall ,key-fn raw-key) 'raw-key)))
+                  (when (or (null name-list) (member name name-list))
+                    (push (,entry-fn name data) entries))))
+              items)
+             (nreverse entries))))
 
-(defun nixos-browse-options--current-name ()
-  "Return the option name at point, or signal an error."
-  (or (tabulated-list-get-id)
-      (user-error "No option on this line")))
+       (defun ,current-name-fn ()
+         ,(format "Return the %s name at point, or signal an error." typestr)
+         (or (tabulated-list-get-id)
+             (user-error "No %s on this line" ,typestr)))
 
-(defun nixos-browse-options-visit ()
-  "Display details for the NixOS option at point."
-  (interactive)
-  (nixos-option (nixos-browse-options--current-name)))
+       (defun ,visit ()
+         ,(format "Display details for the %s at point." typestr)
+         (interactive)
+         (,visit-fn (,current-name-fn)))
 
-(defun nixos-browse-options-search-url ()
-  "Open the current option on search.nixos.org."
-  (interactive)
-  (browse-url (format nixos-option-search-url-template
-                      (nixos-browse-options--current-name))))
+       (defun ,search-url ()
+         ,(format "Open the current %s on search.nixos.org." typestr)
+         (interactive)
+         (browse-url (format ,url-fmt (,current-name-fn))))
 
-(defun nixos-browse-options-refresh ()
-  "Refresh the NixOS options table."
-  (interactive)
-  (setq tabulated-list-entries (nixos-browse-options--entries))
-  (tabulated-list-print t))
+       (defun ,refresh ()
+         ,(format "Refresh the %s table." typestr)
+         (interactive)
+         (setq tabulated-list-entries (,entries-fn))
+         (tabulated-list-print t))
 
-;;;###autoload
-(defun nixos-browse-options (&optional name-list)
-  "Display NixOS options in a browseable table.
+       ;;;###autoload
+       (defun ,cmd (&optional name-list)
+         ,(format "Display Nix %s in a browseable table.
 
-Options are shown with columns for name, type, and description.
-\<nixos-browse-options-mode-map>
-\\[nixos-browse-options-visit] on an entry to view full details,
-\\[nixos-browse-options-search-url] to open on search.nixos.org,
-\\[nixos-browse-options-refresh] to reload the data.
+%s are shown with sortable columns.
+\<%s>
+\\[%s] on an entry to view full details,
+\\[%s] to open on search.nixos.org,
+\\[%s] to reload the data.
 
-When NAME-LIST is non-nil (a list of option names), only those
-options are displayed.  This is used by Embark export.
+When NAME-LIST is non-nil (a list of names), only those entries
+are displayed.  This is used by Embark export.
 
 Emacs' built-in narrowing (\\[narrow-to-defun] etc.) can be used
-to filter the view in-place."
-  (interactive)
-  (let ((buf (get-buffer-create "*NixOS Options*")))
-    (with-current-buffer buf
-      (nixos-browse-options-mode)
-      (setq tabulated-list-entries
-            (nixos-browse-options--entries name-list))
-      (tabulated-list-print))
-    (switch-to-buffer buf)))
+to filter the view in-place." typestr typestr mode-map visit search-url refresh)
+         (interactive)
+         (let ((buf (get-buffer-create ,buffer-name)))
+           (with-current-buffer buf
+             (,mode)
+             (setq tabulated-list-entries
+                   (,entries-fn name-list))
+             (tabulated-list-print))
+           (switch-to-buffer buf))))))
+
+;; Options table
+
+(nixos--define-browse-mode option
+  :mode-label "NixOS-Options"
+  :buffer-name "*NixOS Options*"
+  :columns [("Option" 50 t) ("Type" 20 t) ("Description" 0 nil)]
+  :sort-key ("Option" . nil)
+  :extract-fields ((or (gethash "type" data) "")
+                   (or (nixos--slurp-description data) ""))
+  :visit-fn nixos-option
+  :url-fmt nixos-option-search-url-template
+  :cache-fn nixos--options-load
+  :key-fn nil)
 
 
 ;;; Eldoc
@@ -758,93 +771,17 @@ Shows the package version and description."
 
 ;;; Package Browse Mode
 
-(defvar-keymap nixos-browse-packages-mode-map
-  :doc "Keymap for `nixos-browse-packages-mode'."
-  :parent tabulated-list-mode-map
-  "RET" #'nixos-browse-packages-visit
-  "b"   #'nixos-browse-packages-search-url
-  "g"   #'nixos-browse-packages-refresh)
-
-(define-derived-mode nixos-browse-packages-mode tabulated-list-mode
-  "NixOS-Packages"
-  "Major mode for browsing all Nix packages in a sortable table.
-
-\\{nixos-browse-packages-mode-map}"
-  (setq tabulated-list-format
-        [("Package" 40 t)
-         ("Version" 15 t)
-         ("Description" 0 nil)])
-  (setq tabulated-list-padding 2)
-  (setq tabulated-list-sort-key '("Package" . nil))
-  (tabulated-list-init-header)
-  (hl-line-mode 1))
-
-(defun nixos-browse-packages--entry (name data)
-  "Return a `tabulated-list' entry for package NAME with DATA."
-  (let ((version (or (gethash "version" data) ""))
-        (desc (or (nixos--slurp-description data) "")))
-    (list name (vector name version desc))))
-
-(defun nixos-browse-packages--entries (&optional name-list)
-  "Generate `tabulated-list-entries' for Nix packages.
-When NAME-LIST is non-nil, only include entries whose names
-appear in the list."
-  (let ((packages (nixos--packages-load))
-        entries)
-    (if (= (hash-table-count packages) 0)
-        (user-error
-         "No packages loaded (check `nixos-search-json-file')")
-      (maphash
-       (lambda (key data)
-         (let ((short (string-remove-prefix
-                       "legacyPackages.x86_64-linux." key)))
-           (when (or (null name-list) (member short name-list))
-             (push (nixos-browse-packages--entry short data) entries))))
-       packages)
-      (nreverse entries))))
-
-(defun nixos-browse-packages--current-name ()
-  "Return the package name at point, or signal an error."
-  (or (tabulated-list-get-id)
-      (user-error "No package on this line")))
-
-(defun nixos-browse-packages-visit ()
-  "Display details for the Nix package at point."
-  (interactive)
-  (nixos-package (nixos-browse-packages--current-name)))
-
-(defun nixos-browse-packages-search-url ()
-  "Open the current package on search.nixos.org."
-  (interactive)
-  (browse-url (format nixos-package-search-url-template
-                      (nixos-browse-packages--current-name))))
-
-(defun nixos-browse-packages-refresh ()
-  "Refresh the Nix packages table."
-  (interactive)
-  (setq tabulated-list-entries (nixos-browse-packages--entries))
-  (tabulated-list-print t))
-
-;;;###autoload
-(defun nixos-browse-packages (&optional name-list)
-  "Display Nix packages in a browseable table.
-
-Packages are shown with columns for name, version, and description.
-\<nixos-browse-packages-mode-map>
-\\[nixos-browse-packages-visit] on an entry to view full details,
-\\[nixos-browse-packages-search-url] to open on search.nixos.org,
-\\[nixos-browse-packages-refresh] to reload the data.
-
-When NAME-LIST is non-nil (a list of package names), only those
-packages are displayed.  This is used by Embark export."
-  (interactive)
-  (let ((buf (get-buffer-create "*Nix Packages*")))
-    (with-current-buffer buf
-      (nixos-browse-packages-mode)
-      (setq tabulated-list-entries
-            (nixos-browse-packages--entries name-list))
-      (tabulated-list-print))
-    (switch-to-buffer buf)))
+(nixos--define-browse-mode package
+  :mode-label "NixOS-Packages"
+  :buffer-name "*Nix Packages*"
+  :columns [("Package" 40 t) ("Version" 15 t) ("Description" 0 nil)]
+  :sort-key ("Package" . nil)
+  :extract-fields ((or (gethash "version" data) "")
+                   (or (nixos--slurp-description data) ""))
+  :visit-fn nixos-package
+  :url-fmt nixos-package-search-url-template
+  :cache-fn nixos--packages-load
+  :key-fn (lambda (k) (string-remove-prefix "legacyPackages.x86_64-linux." k)))
 
 
 ;;; Embark
