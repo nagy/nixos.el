@@ -75,30 +75,28 @@
   :group 'tools
   :prefix "nixos-")
 
-(defcustom nixos-options-json-file "@nixosOptionsJson@"
+(defcustom nixos-options-json-file "/etc/nixos-options.json"
   "Path to the NixOS options JSON file.
 
 This file should contain a flat JSON object where each key is a
 dotted option path (e.g. \"services.postgresql.enable\") and each
 value is an object with at least a \"description\" field.
 
-When building via default.nix, this is substituted with a Nix
-store path.  Otherwise it falls back to
-\"/etc/nixos-options.json\" (which NixOS can populate via
-`environment.etc')."
+NixOS can populate this via `environment.etc'.  When building via
+default.nix, the path is substituted with a Nix store path at
+build time."
   :type 'file
   :group 'nixos)
 
-(defcustom nixos-search-json-file "@nixosSearchJson@"
+(defcustom nixos-search-json-file "/etc/nixos-search.json"
   "Path to the Nix package search JSON file.
 
 This file should contain the output of `nix search --json'.
 Keys typically look like \"legacyPackages.x86_64-linux.htop\".
 
-When building via default.nix, this is substituted with a Nix
-store path.  Otherwise it falls back to
-\"/etc/nix-search.json\" (see default.nix for an example of how
-to generate this in your NixOS configuration)."
+See default.nix for an example of how to generate this in your
+NixOS configuration.  When building via default.nix, the path is
+substituted with a Nix store path at build time."
   :type 'file
   :group 'nixos)
 
@@ -144,45 +142,35 @@ Keys are package names, values are JSON strings.
 Memozied because nix store paths are immutable — the metadata
 for a given package name never changes.")
 
-(defun nixos--resolve-path (path &optional fallback)
-  "Return PATH unless it is still a build-time placeholder.
-If PATH starts with @, it is an unsubstituted placeholder;
-return FALLBACK instead (defaulting to the /etc/ path)."
-  (if (string-prefix-p "@" path)
-      (or fallback (concat "/etc/" (substring path 1 -1) ".json"))
-    path))
-
 (defun nixos--options-load ()
   "Load NixOS options from `nixos-options-json-file' into cache.
 Returns the cached hash table."
   (unless nixos--options-cache
-    (let ((file (nixos--resolve-path nixos-options-json-file)))
-      (if (file-readable-p file)
-          (with-temp-buffer
-            (insert-file-contents file)
-            (goto-char (point-min))
-            (setq nixos--options-cache (json-parse-buffer)))
-        (setq nixos--options-cache (make-hash-table :test 'equal)))))
+    (if (file-readable-p nixos-options-json-file)
+        (with-temp-buffer
+          (insert-file-contents nixos-options-json-file)
+          (goto-char (point-min))
+          (setq nixos--options-cache (json-parse-buffer)))
+      (setq nixos--options-cache (make-hash-table :test 'equal))))
   nixos--options-cache)
 
 (defun nixos--packages-load ()
   "Load Nix packages from `nixos-search-json-file' into cache.
 Returns the cached hash table."
   (unless nixos--packages-cache
-    (let ((file (nixos--resolve-path nixos-search-json-file)))
-      (if (file-readable-p file)
-          (let ((table (with-temp-buffer
-                         (insert-file-contents file)
-                         (goto-char (point-min))
-                         (json-parse-buffer))))
-            (setq nixos--packages-cache table
-                  nixos--packages-keys
-                  (mapcar (lambda (k)
-                            (string-remove-prefix
-                             "legacyPackages.x86_64-linux." k))
-                          (hash-table-keys table))))
-        (setq nixos--packages-cache (make-hash-table :test 'equal)
-              nixos--packages-keys nil))))
+    (if (file-readable-p nixos-search-json-file)
+        (let ((table (with-temp-buffer
+                       (insert-file-contents nixos-search-json-file)
+                       (goto-char (point-min))
+                       (json-parse-buffer))))
+          (setq nixos--packages-cache table
+                nixos--packages-keys
+                (mapcar (lambda (k)
+                          (string-remove-prefix
+                           "legacyPackages.x86_64-linux." k))
+                        (hash-table-keys table))))
+      (setq nixos--packages-cache (make-hash-table :test 'equal)
+            nixos--packages-keys nil)))
   nixos--packages-cache)
 
 (defun nixos-refresh-cache ()

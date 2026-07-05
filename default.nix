@@ -35,11 +35,11 @@ let
   postPatch = lib.concatStringsSep "\n" (
     (lib.optional (nixosOptionsJson != null) ''
       substituteInPlace nixos.el \
-                --replace-fail '@nixosOptionsJson@' ${nixosOptionsJson}'')
+                --replace-fail '/etc/nixos-options.json' ${nixosOptionsJson}'')
     ++ [
       ''
         substituteInPlace nixos.el \
-                  --replace-fail '@nixosSearchJson@' ${nixosSearchJson}''
+                  --replace-fail '/etc/nixos-search.json' ${nixosSearchJson}''
     ]
   );
 in
