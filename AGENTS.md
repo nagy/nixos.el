@@ -129,6 +129,19 @@ recognizes the pattern and returns the derivation itself, which
   — `defvar` alone leaves it void, and `let` creates a lexical binding
   in `lexical-binding: t` files, invisible to `boundp`.
 
+### Package display layout
+
+`nixos--display-package` uses local `cl-labels` closures (`field`,
+`link`) to right-pad all field labels to 14 characters.  This keeps
+the shared helpers (`nixos--insert-field`, `nixos--insert-link`)
+untouched for option display.  The local `link` closure superseded
+`nixos--insert-link` — that function is now dead code and can be
+removed.
+
+The store path is face-colored by its on-disk status:
+`dired-directory` (exists, is a dir), default (exists, is a file),
+`error` (missing / GC'd).  The homepage URL uses the `link` face.
+
 ### Functional purity
 
 Keep side-effecting code in interactive commands.  Internal functions
@@ -145,7 +158,6 @@ should be pure where possible — makes them testable without mocking.
 | evil / evil-collections | soft | see evil-collections — not bundled here |
 
 ## TODO
-
 - **Batch package metadata** — `nixos--package-meta` evaluates
   `nix-instantiate` per-package, importing `<nixpkgs>` each time.
   Even with memoization, the first lookup for each package is slow.

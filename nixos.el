@@ -324,14 +324,6 @@ If VALUE is nil or empty, nothing is inserted after the label."
       (insert "  " line "\n"))
     (insert "\n")))
 
-(defun nixos--insert-link (label &optional url)
-  "Insert LABEL (bold) followed by URL as a clickable link."
-  (insert (propertize label 'face 'bold))
-  (when url
-    (insert "  " (propertize url 'mouse-face 'highlight
-                             'help-echo url)))
-  (insert "\n"))
-
 (defun nixos-browse-search-url ()
   "Open the current option or package on search.nixos.org."
   (interactive)
@@ -363,19 +355,24 @@ If VALUE is nil or empty, nothing is inserted after the label."
       ;; Title
       (insert (propertize name 'face 'org-document-title) "\n\n")
       ;; Fields
-      (nixos--insert-field "Type:" (gethash "type" data))
-      (let ((def (nixos--value-to-string (gethash "default" data))))
-        (nixos--insert-field "Default:" def))
-      (let ((desc (gethash "description" data)))
-        (when (and desc (not (eq desc :null)))
-          (nixos--insert-multiline "Description:" desc)))
-      (let ((example (nixos--value-to-string (gethash "example" data))))
-        (nixos--insert-field "Example:" example))
-      (let ((decls (gethash "declarations" data)))
-        (when (and decls (not (eq decls :null)))
-          (insert (propertize "Declared by:" 'face 'bold) "\n")
-          (dolist (d (if (vectorp decls) (append decls nil) decls))
-            (insert "  " d "\n"))))
+      (cl-labels ((field (label value)
+                    (insert (propertize (format "%-14s" label) 'face 'bold))
+                    (when (and value (not (string-empty-p value)))
+                      (insert value))
+                    (insert "\n")))
+        (field "Type:" (gethash "type" data))
+        (let ((def (nixos--value-to-string (gethash "default" data))))
+          (field "Default:" def))
+        (let ((desc (gethash "description" data)))
+          (when (and desc (not (eq desc :null)))
+            (field "Description:" desc)))
+        (let ((example (nixos--value-to-string (gethash "example" data))))
+          (field "Example:" example))
+        (let ((decls (gethash "declarations" data)))
+          (when (and decls (not (eq decls :null)))
+            (field "Declared by:" nil)
+            (dolist (d (if (vectorp decls) (append decls nil) decls))
+              (insert "  " d "\n")))))
       (goto-char (point-min))
       (read-only-mode 1)
       (set-buffer-modified-p nil))
@@ -392,33 +389,50 @@ INFO is an alist from `nixos--package-meta' with keys meta and outPath."
       (nixos--browse-setup 'package name out-path)
       ;; Title
       (insert (propertize name 'face 'org-document-title) "\n\n")
-      (when out-path
-        (insert (propertize "Store path:" 'face 'bold)
-                "  " out-path "\n")
-        (if (file-directory-p out-path)
-            (cd out-path)
-          (cd temporary-file-directory)))
-      ;; Meta fields (hash table from parsed JSON)
-      (when meta-data
-        (let ((desc (gethash "description" meta-data)))
-          (when (and desc (not (eq desc :null)))
-            (nixos--insert-multiline "Description:" desc)))
-        (nixos--insert-field "Version:" (gethash "version" meta-data))
-        (let ((hp (gethash "homepage" meta-data)))
-          (when (and hp (not (eq hp :null)))
-            (nixos--insert-link "Homepage:" hp)))
-        (let ((lic (gethash "license" meta-data)))
-          (when lic
-            (nixos--insert-field "License:"
-                                 (cond ((hash-table-p lic) (gethash "fullName" lic))
-                                       ((stringp lic) lic)
-                                       (t (nixos--value-to-string lic))))))
-        (let ((maint (gethash "maintainers" meta-data)))
-          (when (and maint (not (eq maint :null)))
-            (insert (propertize "Maintainers:" 'face 'bold) "\n")
-            (dolist (m (if (vectorp maint) (append maint nil) maint))
-              (when (hash-table-p m)
-                (insert "  " (or (gethash "name" m) "") "\n"))))))
+      (cl-labels ((field (label value)
+                    (insert (propertize (format "%-14s" label) 'face 'bold))
+                    (when (and value (not (string-empty-p value)))
+                      (insert value))
+                    (insert "\n"))
+                  (link (label url)
+                    (insert (propertize (format "%-14s" label) 'face 'bold))
+                    (when url
+                      (insert (propertize url
+                                          'face 'link
+                                          'mouse-face 'highlight
+                                          'help-echo url)))
+                    (insert "\n")))
+        (when out-path
+          (field "Store path:"
+                 (propertize out-path
+                             'face (cond ((file-directory-p out-path)
+                                          'dired-directory)
+                                         ((file-exists-p out-path) nil)
+                                         (t 'error))))
+          (if (file-directory-p out-path)
+              (cd out-path)
+            (cd temporary-file-directory)))
+        ;; Meta fields (hash table from parsed JSON)
+        (when meta-data
+          (let ((desc (gethash "description" meta-data)))
+            (when (and desc (not (eq desc :null)))
+              (field "Description:" desc)))
+          (field "Version:" (gethash "version" meta-data))
+          (let ((hp (gethash "homepage" meta-data)))
+            (when (and hp (not (eq hp :null)))
+              (link "Homepage:" hp)))
+          (let ((lic (gethash "license" meta-data)))
+            (when lic
+              (field "License:"
+                     (cond ((hash-table-p lic) (gethash "fullName" lic))
+                           ((stringp lic) lic)
+                           (t (nixos--value-to-string lic))))))
+          (let ((maint (gethash "maintainers" meta-data)))
+            (when (and maint (not (eq maint :null)))
+              (field "Maintainers:" nil)
+              (dolist (m (if (vectorp maint) (append maint nil) maint))
+                (when (hash-table-p m)
+                  (insert "  " (or (gethash "name" m) "") "\n")))))))
       ;; Footer hint
       (when out-path
         (insert "\n" (propertize "Press r to view requisites"
