@@ -4,10 +4,10 @@
   emacs ? pkgs.emacs,
   emacsPackages ? emacs.pkgs,
   melpaBuild ? emacsPackages.melpaBuild,
-  # Path to the NixOS options JSON.  On NixOS, pass
-  #   "${config.system.build.manual.optionsJSON}/share/doc/nixos/options.json"
-  # When null, the placeholder stays and runtime fallback to
-  # /etc/nixos-options.json is used.
+  # Path to the NixOS options JSON.  Defaults to the JSON from a
+  # minimal NixOS evaluation (empty config).  Pass
+  # "/etc/nixos-options.json" to skip the eval and keep the runtime
+  # /etc/ fallback instead.
   nixosOptionsJson ? null,
   # Path to the nixpkgs source tree for building the package search
   # JSON offline.  Defaults to <nixpkgs>.
@@ -15,6 +15,17 @@
 }:
 
 let
+  nixosOptionsJsonFinal =
+    if nixosOptionsJson != null
+    then nixosOptionsJson
+    else
+      let
+        emptyEval = import <nixpkgs/nixos/lib/eval-config.nix> {
+          modules = [{ system.stateVersion = "25.05"; }];
+        };
+      in
+        "${emptyEval.config.system.build.manual.optionsJSON}/share/doc/nixos/options.json";
+
   nixosSearchJson =
     pkgs.runCommandLocal "nix-search.json"
       {
@@ -32,16 +43,12 @@ let
           search path:${nixpkgsPath} --json "" | jq --sort-keys > $out
       '';
 
-  postPatch = lib.concatStringsSep "\n" (
-    (lib.optional (nixosOptionsJson != null) ''
-      substituteInPlace nixos.el \
-                --replace-fail '/etc/nixos-options.json' ${nixosOptionsJson}'')
-    ++ [
-      ''
-        substituteInPlace nixos.el \
-                  --replace-fail '/etc/nixos-search.json' ${nixosSearchJson}''
-    ]
-  );
+  postPatch = ''
+    substituteInPlace nixos.el \
+              --replace-fail '/etc/nixos-options.json' ${nixosOptionsJsonFinal}
+    substituteInPlace nixos.el \
+              --replace-fail '/etc/nixos-search.json' ${nixosSearchJson}
+  '';
 in
 melpaBuild (finalAttrs: {
   pname = "nixos";
