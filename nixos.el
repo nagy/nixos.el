@@ -714,7 +714,7 @@ Internal use only."
 
        (defun ,entry-fn (name data)
          ,(format "Return a `tabulated-list' entry for %s NAME with DATA." typestr)
-         (list name (vector name ,@extract-fields)))
+         (list name (vector (propertize name 'face 'nixos-package-name) ,@extract-fields)))
 
        (defun ,entries-fn (&optional name-list)
          ,(format "Generate `tabulated-list-entries' for %s.
@@ -785,7 +785,8 @@ to filter the view in-place." typestr typestr mode-map visit search-url refresh)
   :columns [("Option" 50 t) ("Type" 20 t) ("Description" 0 nil)]
   :sort-key ("Option" . nil)
   :extract-fields ((or (gethash "type" data) "")
-                   (or (nixos--slurp-description data) ""))
+                   (propertize (nixos--slurp-description data)
+                               'face 'nixos-description))
   :visit-fn nixos-option
   :url-fmt nixos-option-search-url-template
   :cache-fn nixos--options-load
@@ -861,7 +862,8 @@ Shows the package version and description."
   :columns [("Package" 40 t) ("Version" 15 t) ("Description" 0 nil)]
   :sort-key ("Package" . nil)
   :extract-fields ((or (gethash "version" data) "")
-                   (or (nixos--slurp-description data) ""))
+                   (propertize (nixos--slurp-description data)
+                               'face 'nixos-description))
   :visit-fn nixos-package
   :url-fmt nixos-package-search-url-template
   :cache-fn nixos--packages-load
