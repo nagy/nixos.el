@@ -292,7 +292,8 @@ ACTION."
 
 \\{nixos-browse-mode-map}"
   :interactive nil
-  (setq-local bookmark-make-record-function #'nixos--bookmark-make-record))
+  (setq-local bookmark-make-record-function #'nixos--bookmark-make-record)
+  (setq-local revert-buffer-function #'nixos-browse-refresh))
 
 (defvar-local nixos--browse-type nil
   "The type of item in the current browse buffer: `option' or `package'.")
@@ -353,15 +354,19 @@ This shows requisites, references, derivers, etc."
                        nixos--browse-name))))
     (browse-url url)))
 
-(defun nixos-browse-refresh ()
-  "Refresh the current browse buffer."
+(defun nixos-browse-refresh (&rest _ignored)
+  "Refresh the current browse buffer.
+Optional IGNORED args accommodate `revert-buffer-function' calling
+convention."
   (interactive)
   (unless nixos--browse-name
     (user-error "Nothing to refresh"))
-  (cl-case nixos--browse-type
-    (option (nixos-option nixos--browse-name))
-    (package (nixos-package nixos--browse-name))
-    (t (user-error "Unknown browse type %s" nixos--browse-type))))
+  (let ((pt (point)))
+    (cl-case nixos--browse-type
+      (option (nixos-option nixos--browse-name))
+      (package (nixos-package nixos--browse-name))
+      (t (user-error "Unknown browse type %s" nixos--browse-type)))
+    (goto-char pt)))
 
 (defun nixos--display-option (name data)
   "Create a formatted detail buffer for NixOS option NAME with DATA."
@@ -522,7 +527,7 @@ metadata for a given package is stable forever."
                (stringp nix-instantiate-executable))
       (with-temp-buffer
         (when (zerop
-               (call-process nix-instantiate-executable nil t nil
+               (call-process nix-instantiate-executable nil (list t null-device) nil
                              "--strict" "--json" "--eval"
                              "--argstr" "cand" package-name
                              "-E"
