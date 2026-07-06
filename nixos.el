@@ -466,30 +466,43 @@ version, buildInputs and nativeBuildInputs."
                   (when (hash-table-p m)
                     (insert "  " (or (gethash "name" m) "") "\n")))))))
         ;; Build dependencies
-        (dolist (dep-type `((buildInputs . "Build Inputs:")
-                            (nativeBuildInputs . "Native Build Inputs:")))
-          (let ((deps (alist-get (car dep-type) info)))
-            (when (and deps (vectorp deps) (> (length deps) 0))
-              (insert "\n" (propertize (cdr dep-type) 'face 'nixos-field-label) "\n")
-              (dolist (dep (append deps nil))
-                (insert "  ")
-                (let ((dep-name (gethash "name" dep))
-                      (dep-store (gethash "storePath" dep)))
-                  (if dep-name
-                      (insert-text-button dep-name
-                        'action (lambda (_) (nixos-package dep-name))
-                        'follow-link t
-                        'face 'link
-                        'help-echo (format "Browse package: %s" dep-name))
-                    (insert "???"))
-                  (when dep-store
-                    (insert "  "
-                            (propertize dep-store
-                              'face (cond ((file-directory-p dep-store)
-                                           'dired-directory)
-                                          ((file-exists-p dep-store) nil)
-                                          (t 'error))))))
-                (insert "\n")))))
+        ;; Compute global max-name across all dep types for alignment.
+        (let ((global-max 0))
+          (dolist (dep-type '((buildInputs) (nativeBuildInputs)))
+            (let ((deps (alist-get (car dep-type) info)))
+              (when (and deps (vectorp deps) (> (length deps) 0))
+                (dolist (dep (append deps nil))
+                  (let ((n (gethash "name" dep)))
+                    (when n
+                      (setq global-max (max global-max (string-width n)))))))))
+          ;; Display with global alignment.
+          (dolist (dep-type `((buildInputs . "Build Inputs:")
+                              (nativeBuildInputs . "Native Build Inputs:")))
+            (let ((deps (alist-get (car dep-type) info)))
+              (when (and deps (vectorp deps) (> (length deps) 0))
+                (insert "\n" (propertize (cdr dep-type) 'face 'nixos-field-label) "\n")
+                (dolist (dep (append deps nil))
+                  (insert "  ")
+                  (let ((dep-name (gethash "name" dep))
+                        (dep-store (gethash "storePath" dep)))
+                    (if dep-name
+                        (progn
+                          (insert-text-button dep-name
+                            'action (lambda (_) (nixos-package dep-name))
+                            'follow-link t
+                            'face 'link
+                            'help-echo (format "Browse package: %s" dep-name))
+                          (when dep-store
+                            (insert (make-string
+                                     (+ (- global-max (string-width dep-name)) 2)
+                                     ?\s))
+                            (insert (propertize dep-store
+                                      'face (cond ((file-directory-p dep-store)
+                                                   'dired-directory)
+                                                  ((file-exists-p dep-store) nil)
+                                                  (t 'error))))))
+                      (insert "???")))
+                  (insert "\n"))))))
         ;; Footer hint
         (when out-path
           (insert "\n" (propertize "Press r to view requisites"
