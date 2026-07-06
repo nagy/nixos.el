@@ -613,17 +613,24 @@ Intended for use as `bookmark-make-record-function'."
              nixos--browse-name)
     (type . ,nixos--browse-type)
     (name . ,nixos--browse-name)
-    (handler . nixos--bookmark-jump)))
+    (handler . nixos--bookmark-jump)
+    (local . ,nixos--browse-local)
+    (local-dir . ,nixos--browse-local-dir)))
 
 ;;;###autoload
 (defun nixos--bookmark-jump (bookmark)
   "Restore a nixos BOOKMARK.
 Called by the bookmark system."
   (let ((type (alist-get 'type bookmark))
-        (name (alist-get 'name bookmark)))
+        (name (alist-get 'name bookmark))
+        (local (alist-get 'local bookmark))
+        (local-dir (alist-get 'local-dir bookmark)))
     (cl-case type
       (option (nixos-option name))
-      (package (nixos-package name))
+      (package (if local
+                   (let ((default-directory local-dir))
+                     (nixos-package-local))
+                 (nixos-package name)))
       (t (user-error "Unknown bookmark type %s" type)))))
 
 

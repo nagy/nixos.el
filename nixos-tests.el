@@ -478,7 +478,9 @@ converted to strings by stripping the leading colon."
         (should (stringp (car rec)))
         (should (eq (alist-get 'type rec) 'option))
         (should (equal (alist-get 'name rec) "services.foo.enable"))
-        (should (eq (alist-get 'handler rec) 'nixos--bookmark-jump)))
+        (should (eq (alist-get 'handler rec) 'nixos--bookmark-jump))
+        (should-not (alist-get 'local rec))
+        (should-not (alist-get 'local-dir rec)))
       (kill-buffer))))
 
 (ert-deftest nixos-bookmark-jump-option ()
@@ -509,6 +511,23 @@ converted to strings by stripping the leading colon."
         (nixos--bookmark-jump '((type . package)
                                 (name . "htop")))
         (should (equal called-name "htop"))))))
+
+(ert-deftest nixos-bookmark-jump-package-local ()
+  "`nixos--bookmark-jump' calls `nixos-package-local' for local bookmarks."
+  (nixos-test--with-packages
+      (nixos-test--packages-hash
+       '("legacyPackages.x86_64-linux.htop"
+         :pname "htop" :description "viewer"))
+    (let ((called-dir nil))
+      (cl-letf (((symbol-function 'pop-to-buffer)
+                 (lambda (buf) (set-buffer buf)))
+                ((symbol-function 'nixos-package-local)
+                 (lambda () (setq called-dir default-directory))))
+        (nixos--bookmark-jump '((type . package)
+                                (name . "htop")
+                                (local . t)
+                                (local-dir . "/tmp/my-project/")))
+        (should (equal called-dir "/tmp/my-project/"))))))
 
 
 ;;; URL templates
