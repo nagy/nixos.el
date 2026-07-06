@@ -481,6 +481,9 @@ package."
               (when (and hp (not (eq hp :null)))
                 (setq nixos--browse-homepage hp)
                 (link "Homepage:" hp)))
+            (let ((repo (alist-get 'repository info)))
+              (when (and repo (stringp repo) (not (string-empty-p repo)))
+                (link "Repository:" repo)))
             (let ((lic (gethash "license" meta-data)))
               (when lic
                 (field "License:"
@@ -549,7 +552,8 @@ package."
    " in [ pkg.meta pkg.outPath pkg.version"
    "     (depInfo (pkg.buildInputs or []))"
    "     (depInfo (pkg.nativeBuildInputs or []))"
-   "     (pkg.pname or \"\") ]"))
+   "     (pkg.pname or \"\")"
+   "     (pkg.src.meta.homepage or pkg.src.url or \"\") ]"))
 
 (defun nixos--call-nix-package-expr (expr &rest extra-args)
   "Call nix-instantiate with EXPR and EXTRA-ARGS, return (RESULT . STDERR).
@@ -572,7 +576,7 @@ entirely if nix-instantiate is unavailable."
                   (progn
                     (goto-char (point-min))
                     (let ((result (json-parse-buffer)))
-                      ;; result is [meta outPath version buildInputs nativeBuildInputs pname],
+                      ;; result is [meta outPath version buildInputs nativeBuildInputs pname repository],
                       ;; a vector.  An attrset {meta=…; outPath=…} would
                       ;; collapse to the derivation's store path.
                       (let ((meta (and (vectorp result) (>= (length result) 1) (aref result 0)))
@@ -580,13 +584,15 @@ entirely if nix-instantiate is unavailable."
                             (ver (and (vectorp result) (>= (length result) 3) (aref result 2)))
                             (build (and (vectorp result) (>= (length result) 4) (aref result 3)))
                             (native (and (vectorp result) (>= (length result) 5) (aref result 4)))
-                            (pname (and (vectorp result) (>= (length result) 6) (aref result 5))))
+                            (pname (and (vectorp result) (>= (length result) 6) (aref result 5)))
+                            (repo (and (vectorp result) (>= (length result) 7) (aref result 6))))
                         (cons (list (cons 'meta (and meta (not (eq meta :null)) meta))
                                     (cons 'outPath (and out (not (eq out :null)) out))
                                     (cons 'version (and ver (not (eq ver :null)) ver))
                                     (cons 'buildInputs (and build (vectorp build) (not (eq build :null)) build))
                                     (cons 'nativeBuildInputs (and native (vectorp native) (not (eq native :null)) native))
-                                    (cons 'pname (and pname (not (eq pname :json-false)) pname)))
+                                    (cons 'pname (and pname (not (eq pname :json-false)) pname))
+                                    (cons 'repository (and repo (not (eq repo :json-false)) (not (string-empty-p repo)) repo)))
                               ""))))
                 (cons nil (with-temp-buffer
                             (insert-file-contents stderr-file)

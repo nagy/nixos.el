@@ -772,7 +772,8 @@ converted to strings by stripping the leading colon."
                                (cons 'version (if (string= pkg "htop") "3.5.1" "0.10"))
                                (cons 'buildInputs [])
                                (cons 'nativeBuildInputs [])
-                               (cons 'pname pkg))
+                               (cons 'pname pkg)
+                               (cons 'repository (format "https://github.com/org/%s" pkg)))
                          "")))))
       (unwind-protect
           (progn
