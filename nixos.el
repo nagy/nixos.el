@@ -285,7 +285,8 @@ ACTION."
   :parent special-mode-map
   "b" #'nixos-browse-search-url
   "g" #'nixos-browse-refresh
-  "r" #'nixos-browse-show-requisites)
+  "r" #'nixos-browse-show-requisites
+  "w" #'nixos-browse-copy-store-path)
 
 (define-derived-mode nixos-browse-mode fundamental-mode "NixOS-Browse"
   "Major mode for browsing NixOS option / package details.
@@ -338,6 +339,16 @@ This shows requisites, references, derivers, etc."
   (if (fboundp 'nix-store-show-path)
       (nix-store-show-path nixos--browse-out-path)
     (user-error "nix-store-mode not available; install nix-mode")))
+
+(defun nixos-browse-copy-store-path ()
+  "Copy the store path of the current package to the kill ring."
+  (interactive)
+  (unless (eq nixos--browse-type 'package)
+    (user-error "Store path only available for packages"))
+  (unless nixos--browse-out-path
+    (user-error "No store path available for this package"))
+  (kill-new nixos--browse-out-path)
+  (message "Copied: %s" nixos--browse-out-path))
 
 
 ;;; Display helpers
