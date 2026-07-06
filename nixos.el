@@ -297,11 +297,15 @@ ACTION."
 (defvar-local nixos--browse-out-path nil
   "Store path of the package in the current browse buffer, if any.")
 
+(defvar-local nixos--browse-homepage nil
+  "Homepage URL of the package in the current browse buffer, if any.")
+
 (defun nixos--browse-setup (type name &optional out-path)
   "Configure the current buffer for browsing TYPE (option or package) NAME."
   (setq nixos--browse-type type
         nixos--browse-name name
-        nixos--browse-out-path out-path))
+        nixos--browse-out-path out-path
+        nixos--browse-homepage nil))
 
 (defun nixos-browse-show-requisites ()
   "Open the store path of the current package in `nix-store-path-mode'.
@@ -433,6 +437,7 @@ version, buildInputs and nativeBuildInputs."
                                   (alist-get 'version info)))
             (let ((hp (gethash "homepage" meta-data)))
               (when (and hp (not (eq hp :null)))
+                (setq nixos--browse-homepage hp)
                 (link "Homepage:" hp)))
             (let ((lic (gethash "license" meta-data)))
               (when lic
