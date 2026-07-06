@@ -101,6 +101,15 @@ derivation, and when combined with `pkg.meta` in one attrset, Nix
 recognizes the pattern and returns the derivation itself, which
 `--strict` forces to its output path.
 
+**Bonus gotcha: `outPath` is a magic key name.**  Nix uses
+`outPath` for `toString` / string interpolation on derivations.
+If _any_ attrset has a key literally named `outPath`, Nix
+collapses the entire attrset to that value when `--strict`
+evaluates it — even for sub-attrsets deep in a list
+(e.g. `{name="foo"; outPath=pkg.outPath;}` per dependency).
+Rename the key to something else (`storePath`, `path`, etc.) to
+preserve the full attrset.
+
 ### Tabulated-list conventions
 
 - Entry format: `(id [id col1 col2...])`

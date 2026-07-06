@@ -404,7 +404,8 @@ If VALUE is nil or empty, nothing is inserted after the label."
 
 (defun nixos--display-package (name info)
   "Create a formatted detail buffer for Nix package NAME with INFO.
-INFO is an alist from `nixos--package-meta' with keys meta and outPath."
+INFO is an alist from `nixos--package-meta' with keys meta, outPath,
+version, buildInputs and nativeBuildInputs."
   (let ((meta-data (alist-get 'meta info))
         (out-path (alist-get 'outPath info))
         (buf (get-buffer-create (format "*nixos-package %s*" name))))
@@ -464,6 +465,31 @@ INFO is an alist from `nixos--package-meta' with keys meta and outPath."
                 (dolist (m (if (vectorp maint) (append maint nil) maint))
                   (when (hash-table-p m)
                     (insert "  " (or (gethash "name" m) "") "\n")))))))
+        ;; Build dependencies
+        (dolist (dep-type `((buildInputs . "Build Inputs:")
+                            (nativeBuildInputs . "Native Build Inputs:")))
+          (let ((deps (alist-get (car dep-type) info)))
+            (when (and deps (vectorp deps) (> (length deps) 0))
+              (insert "\n" (propertize (cdr dep-type) 'face 'nixos-field-label) "\n")
+              (dolist (dep (append deps nil))
+                (insert "  ")
+                (let ((dep-name (gethash "name" dep))
+                      (dep-store (gethash "storePath" dep)))
+                  (if dep-name
+                      (insert-text-button dep-name
+                        'action (lambda (_) (nixos-package dep-name))
+                        'follow-link t
+                        'face 'link
+                        'help-echo (format "Browse package: %s" dep-name))
+                    (insert "???"))
+                  (when dep-store
+                    (insert "  "
+                            (propertize dep-store
+                              'face (cond ((file-directory-p dep-store)
+                                           'dired-directory)
+                                          ((file-exists-p dep-store) nil)
+                                          (t 'error))))))
+                (insert "\n")))))
         ;; Footer hint
         (when out-path
           (insert "\n" (propertize "Press r to view requisites"
@@ -474,9 +500,11 @@ INFO is an alist from `nixos--package-meta' with keys meta and outPath."
     (pop-to-buffer buf)))
 
 (defun nixos--package-meta (package-name)
-  "Fetch metadata and outPath for PACKAGE-NAME using `nix-instantiate'.
-Returns an alist with keys `meta' (a hash table) and `outPath' (a
-string), or nil if nix-instantiate is not available.
+  "Fetch metadata, outPath, version and build deps for PACKAGE-NAME.
+Returns an alist with keys `meta' (hash table), `outPath' (string),
+`version' (string), `buildInputs' (vector of dep attrsets), and
+`nativeBuildInputs' (vector of dep attrsets), or nil if
+nix-instantiate is not available.
 
 Results are memoized: since Nix store paths are immutable, the
 metadata for a given package is stable forever."
@@ -493,18 +521,28 @@ metadata for a given package is stable forever."
                              "-E"
                              (concat
                               "{cand}: let pkg = (import <nixpkgs> {}).${cand};"
-                              " in [ pkg.meta pkg.outPath pkg.version ]")))
+                              " depInfo = deps: map (d:"
+                              "   { name = d.pname or d.name or \"unknown\";"
+                              "     storePath = d.outPath;"
+                              "   }) deps;"
+                              " in [ pkg.meta pkg.outPath pkg.version"
+                              "      (depInfo (pkg.buildInputs or []))"
+                              "      (depInfo (pkg.nativeBuildInputs or [])) ]")))
           (goto-char (point-min))
           (let ((result (json-parse-buffer)))
-            ;; result is [meta outPath version], a vector.
-            ;; An attrset {meta=…; outPath=…} would
+            ;; result is [meta outPath version buildInputs nativeBuildInputs],
+            ;; a vector.  An attrset {meta=…; outPath=…} would
             ;; collapse to the derivation's store path.
             (let ((meta (and (vectorp result) (>= (length result) 1) (aref result 0)))
                   (out (and (vectorp result) (>= (length result) 2) (aref result 1)))
-                  (ver (and (vectorp result) (>= (length result) 3) (aref result 2))))
+                  (ver (and (vectorp result) (>= (length result) 3) (aref result 2)))
+                  (build (and (vectorp result) (>= (length result) 4) (aref result 3)))
+                  (native (and (vectorp result) (>= (length result) 5) (aref result 4))))
               (list (cons 'meta (and meta (not (eq meta :null)) meta))
                     (cons 'outPath (and out (not (eq out :null)) out))
-                    (cons 'version (and ver (not (eq ver :null)) ver))))))))))
+                    (cons 'version (and ver (not (eq ver :null)) ver))
+                    (cons 'buildInputs (and build (vectorp build) (not (eq build :null)) build))
+                    (cons 'nativeBuildInputs (and native (vectorp native) (not (eq native :null)) native))))))))))
 
 
 ;;; Bookmarks
