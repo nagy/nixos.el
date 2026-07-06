@@ -503,10 +503,6 @@ version, buildInputs and nativeBuildInputs."
                                                   (t 'error))))))
                       (insert "???")))
                   (insert "\n"))))))
-        ;; Footer hint
-        (when out-path
-          (insert "\n" (propertize "Press r to view requisites"
-                                   'face 'shadow) "\n"))
         (goto-char (point-min))
         (read-only-mode 1)
         (set-buffer-modified-p nil)))
