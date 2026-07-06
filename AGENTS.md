@@ -192,9 +192,49 @@ available, with built-in fallbacks (`bold`, `default`).  No
 left-to-right, skipping undefined faces.
 
 ## TODO
+
 - **Batch package metadata** — `nixos--package-meta` evaluates
   `nix-instantiate` per-package, importing `<nixpkgs>` each time.
   Even with memoization, the first lookup for each package is slow.
   Options: (a) evaluate multiple packages in a single Nix call,
   (b) precompute a metadata JSON at build time (like options/search
   already do).
+
+- **Display build phase hooks** — Show non-default pre/post hooks
+  (prePatch, postPatch, preBuild, postBuild, preConfigure,
+  postConfigure, preInstall, postInstall, preCheck, postCheck,
+  preFixup, postFixup) in the package detail buffer, fontified with
+  `bash-ts-mode` (tree-sitter).  Empty hooks = standard package,
+  non-empty hooks = customization signal.
+
+  **Design decisions:**
+  - Only hook phases, not full phases (`configurePhase` etc.) — full
+    phases always have content and are noisy.
+  - Stdenv defaults for hooks are empty strings, so no comparison
+    logic needed; just show non-empty values.
+  - Extract alongside existing metadata in the same
+    `nix-instantiate` JSON array (no extra Nix evaluations).
+  - Fontification: `bash-ts-mode` with `sh-mode` fallback.  Insert
+    into a temp buffer, font-lock, copy with text properties.
+  - Long-term: rebase display onto `magit-section` for collapsible
+    sections (larger refactor, not scoped to this task).
+
+  **Nix side (~10 lines):**
+  ```nix
+  # Extend the 5-element array with hooks:
+  [ pkg.meta pkg.outPath pkg.version
+    (depInfo (pkg.buildInputs or []))
+    (depInfo (pkg.nativeBuildInputs or []))
+    (pkg.prePatch or "")
+    (pkg.postPatch or "")
+    (pkg.preBuild or "")
+    (pkg.postBuild or "")
+    ... ]
+  ```
+  `or ""` handles non-stdenv packages gracefully.
+
+  **Elisp side (~40-70 lines):**
+  - Parse new array elements in `nixos--package-meta`.
+  - In `nixos--display-package`, iterate non-empty hooks and insert
+    fontified blocks using `bash-ts-mode` / `sh-mode`.
+  - Update test mocks from 5-element to extended arrays.
