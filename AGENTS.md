@@ -23,11 +23,14 @@ Single file (`nixos.el`), sections roughly:
 
 1. defgroup / defcustom
 2. Cache (hash-table vars, load functions, `nixos-refresh-cache`)
-3. Helpers (`nixos--slurp-description`)
+3. Helpers (`nixos--slurp-description`, `nixos--package-expr-tail`,
+   `nixos--call-nix-package-expr`)
 4. Options / Packages collection + annotation
-5. Browse modes (`nixos-browse-mode`, `nixos--define-browse-mode` macro for browse-options/packages)
-6. Bookmarks, thingatpt, eldoc
-7. Marginalia annotators, Embark export + actions
+5. Browse modes (`nixos-browse-mode`, `nixos--define-browse-mode`
+   macro for browse-options/packages)
+6. `nixos-package` / `nixos-package-local` interactive commands
+7. Bookmarks, thingatpt, eldoc
+8. Marginalia annotators, Embark export + actions
 
 ## Conventions
 
@@ -143,17 +146,56 @@ in …
   bind the cache vars directly (no JSON file needed).
 - Mock `switch-to-buffer` / `pop-to-buffer` with `cl-letf` to test
   display without UI.
-- Mock `nixos--package-meta` or `browse-url` when side-effects are
-  undesirable.
-- Mock `call-process` to simulate `nix-instantiate` output when
-  testing `nixos--package-meta` directly.  Use the 5-element JSON
-  array format `[{…},"store-path","version",[],[]]` (see Nix
-  expression gotcha above).
+- Mock `nixos--package-meta`, `nixos--call-nix-package-expr`, or
+  `browse-url` when side-effects are undesirable.
+- When testing `nixos--package-meta` memoization, mock
+  `nixos--call-nix-package-expr` to return a cons `(ALIST . "")`.
+  Mocking `call-process` directly is fragile: `apply` in
+  `lexical-binding: t` files on Emacs 31 doesn't reliably pick up
+  `cl-letf` on `(symbol-function 'call-process)`.
 - Tests that need `nix-mode` use `(skip-unless (fboundp 'nix-mode))`.
 - When testing `nixos--package-meta` memoization without loading
   `nix-mode`, use `(setq nix-instantiate-executable "nix-instantiate")`
   — `defvar` alone leaves it void, and `let` creates a lexical binding
   in `lexical-binding: t` files, invisible to `boundp`.
+
+### `let*` for sequential bindings
+
+In `lexical-binding: t`, plain `let` evaluates all init forms in the
+outer scope — later bindings cannot reference earlier ones.
+Use `let*` when one binding's init form depends on a prior binding.
+
+```elisp
+;; Wrong — args can't see stderr-file
+(let ((stderr-file (make-temp-file "stderr-"))
+      (args (list stderr-file)))
+  …)
+
+;; Correct
+(let* ((stderr-file (make-temp-file "stderr-"))
+       (args (list stderr-file)))
+  …)
+```
+
+### Stderr capture via temp file
+
+`call-process` with a buffer as stderr destination (`(list t buffer)`)
+causes `stringp, #<killed buffer>` errors in Emacs 31 when the
+command exits non-zero.  Use a temp file for stderr instead:
+
+```elisp
+(let* ((stderr-file (make-temp-file "nixos-stderr-"))
+       (args (list program nil (list t stderr-file) nil …)))
+  (unwind-protect
+      (with-temp-buffer
+        (let ((exit-code (apply 'call-process args)))
+          (if (zerop exit-code)
+              …parse stdout…
+            (cons nil (with-temp-buffer
+                        (insert-file-contents stderr-file)
+                        (buffer-string)))))
+    (delete-file stderr-file)))
+```
 
 ### Package display layout
 
@@ -221,7 +263,7 @@ left-to-right, skipping undefined faces.
 
   **Nix side (~10 lines):**
   ```nix
-  # Extend the 5-element array with hooks:
+  # Extend the JSON array with hooks:
   [ pkg.meta pkg.outPath pkg.version
     (depInfo (pkg.buildInputs or []))
     (depInfo (pkg.nativeBuildInputs or []))
@@ -237,4 +279,23 @@ left-to-right, skipping undefined faces.
   - Parse new array elements in `nixos--package-meta`.
   - In `nixos--display-package`, iterate non-empty hooks and insert
     fontified blocks using `bash-ts-mode` / `sh-mode`.
-  - Update test mocks from 5-element to extended arrays.
+  - Update test mocks for the extended array.
+
+- **Rust crate integration** — Detect `buildRustPackage` derivations
+  and offer a keybinding to jump to a `Cargo.lock`-based buffer
+  (provided by an external crates major mode).
+
+  **Detection:** check `(pkg ? cargoDeps)` or `pkg.cargoDeps or null`
+  in the `nix-instantiate` JSON array.  If non-null, the derivation
+  uses the Rust builder.
+
+  **Jump target:**
+  - Local projects (`nixos-package-local`): trivial — the project
+    directory is already known via `nixos--browse-local-dir`,
+    so `(expand-file-name "Cargo.lock" nixos--browse-local-dir)`
+    gives the lock-file location.
+  - Nixpkgs packages: harder — need the source store path.  The
+    lock-file path (`./Cargo.lock` in the source tree) resolves to
+    a store path at eval time, but the source may not be on disk
+    unless already fetched.  Could extract `pkg.src` from the
+    derivation attributes.

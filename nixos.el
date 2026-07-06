@@ -307,12 +307,24 @@ ACTION."
 (defvar-local nixos--browse-homepage nil
   "Homepage URL of the package in the current browse buffer, if any.")
 
+(defvar-local nixos--browse-local nil
+  "Non-nil if the current browse buffer shows a local package.
+Set by `nixos-package-local', used by `nixos-browse-refresh'
+to re-evaluate the local default.nix instead of looking up a
+nixpkgs package.")
+
+(defvar-local nixos--browse-local-dir nil
+  "Full directory path of the local package, if `nixos--browse-local' is non-nil.
+Used by `nixos-browse-refresh' to re-evaluate in the correct directory.")
+
 (defun nixos--browse-setup (type name &optional out-path)
   "Configure the current buffer for browsing TYPE (option or package) NAME."
   (setq nixos--browse-type type
         nixos--browse-name name
         nixos--browse-out-path out-path
-        nixos--browse-homepage nil))
+        nixos--browse-homepage nil
+        nixos--browse-local nil
+        nixos--browse-local-dir nil))
 
 (defun nixos-browse-show-requisites ()
   "Open the store path of the current package in `nix-store-path-mode'.
@@ -364,7 +376,10 @@ convention."
   (let ((pt (point)))
     (cl-case nixos--browse-type
       (option (nixos-option nixos--browse-name))
-      (package (nixos-package nixos--browse-name))
+      (package (if nixos--browse-local
+                   (let ((default-directory nixos--browse-local-dir))
+                     (nixos-package-local))
+                 (nixos-package nixos--browse-name)))
       (t (user-error "Unknown browse type %s" nixos--browse-type)))
     (goto-char pt)))
 
@@ -437,8 +452,7 @@ version, buildInputs and nativeBuildInputs."
                                            ((file-exists-p out-path) nil)
                                            (t 'error))))
             (if (file-directory-p out-path)
-                (cd out-path)
-              (cd temporary-file-directory)))
+                (cd out-path)))
           ;; Meta fields (hash table from parsed JSON)
           (when meta-data
             (let ((desc (gethash "description" meta-data)))
@@ -491,25 +505,78 @@ version, buildInputs and nativeBuildInputs."
                     (if dep-name
                         (progn
                           (insert-text-button dep-name
-                            'action (lambda (_) (nixos-package dep-name))
-                            'follow-link t
-                            'face 'link
-                            'help-echo (format "Browse package: %s" dep-name))
+                                              'action (lambda (_) (nixos-package dep-name))
+                                              'follow-link t
+                                              'face 'link
+                                              'help-echo (format "Browse package: %s" dep-name))
                           (when dep-store
                             (insert (make-string
                                      (+ (- global-max (string-width dep-name)) 2)
                                      ?\s))
                             (insert (propertize dep-store
-                                      'face (cond ((file-directory-p dep-store)
-                                                   'dired-directory)
-                                                  ((file-exists-p dep-store) nil)
-                                                  (t 'error))))))
+                                                'face (cond ((file-directory-p dep-store)
+                                                             'dired-directory)
+                                                            ((file-exists-p dep-store) nil)
+                                                            (t 'error))))))
                       (insert "???")))
                   (insert "\n"))))))
         (goto-char (point-min))
         (read-only-mode 1)
         (set-buffer-modified-p nil)))
     (pop-to-buffer buf)))
+
+(defconst nixos--package-expr-tail
+  (concat
+   "  depInfo = deps: map (d:"
+   "    { name = d.pname or d.name or \"unknown\";"
+   "      storePath = d.outPath;"
+   "    }) deps;"
+   " in [ pkg.meta pkg.outPath pkg.version"
+   "     (depInfo (pkg.buildInputs or []))"
+   "     (depInfo (pkg.nativeBuildInputs or []))"
+   "     (pkg.pname or \"\") ]"))
+
+(defun nixos--call-nix-package-expr (expr &rest extra-args)
+  "Call nix-instantiate with EXPR and EXTRA-ARGS, return (RESULT . STDERR).
+EXTRA-ARGS are passed directly to call-process before \"-E\".
+
+Returns a cons cell (ALIST . STDERR): on success ALIST is the
+parsed package alist and STDERR is an empty string.  On failure
+ALIST is nil and STDERR contains the error output.  Returns nil
+entirely if nix-instantiate is unavailable."
+  (when (and (boundp 'nix-instantiate-executable)
+             (stringp nix-instantiate-executable))
+    (let* ((stderr-file (make-temp-file "nixos-stderr-"))
+           (args (append (list nix-instantiate-executable nil (list t stderr-file) nil)
+                         extra-args
+                         (list "--strict" "--json" "--eval" "-E" expr))))
+      (unwind-protect
+          (with-temp-buffer
+            (let ((exit-code (apply 'call-process args)))
+              (if (zerop exit-code)
+                  (progn
+                    (goto-char (point-min))
+                    (let ((result (json-parse-buffer)))
+                      ;; result is [meta outPath version buildInputs nativeBuildInputs pname],
+                      ;; a vector.  An attrset {meta=…; outPath=…} would
+                      ;; collapse to the derivation's store path.
+                      (let ((meta (and (vectorp result) (>= (length result) 1) (aref result 0)))
+                            (out (and (vectorp result) (>= (length result) 2) (aref result 1)))
+                            (ver (and (vectorp result) (>= (length result) 3) (aref result 2)))
+                            (build (and (vectorp result) (>= (length result) 4) (aref result 3)))
+                            (native (and (vectorp result) (>= (length result) 5) (aref result 4)))
+                            (pname (and (vectorp result) (>= (length result) 6) (aref result 5))))
+                        (cons (list (cons 'meta (and meta (not (eq meta :null)) meta))
+                                    (cons 'outPath (and out (not (eq out :null)) out))
+                                    (cons 'version (and ver (not (eq ver :null)) ver))
+                                    (cons 'buildInputs (and build (vectorp build) (not (eq build :null)) build))
+                                    (cons 'nativeBuildInputs (and native (vectorp native) (not (eq native :null)) native))
+                                    (cons 'pname (and pname (not (eq pname :json-false)) pname)))
+                              ""))))
+                (cons nil (with-temp-buffer
+                            (insert-file-contents stderr-file)
+                            (buffer-string))))))
+        (delete-file stderr-file)))))
 
 (defun nixos--package-meta (package-name)
   "Fetch metadata, outPath, version and build deps for PACKAGE-NAME.
@@ -523,43 +590,15 @@ metadata for a given package is stable forever."
   (unless nixos--package-meta-cache
     (setq nixos--package-meta-cache (make-hash-table :test 'equal)))
   (with-memoization (gethash package-name nixos--package-meta-cache)
-    (when (and (boundp 'nix-instantiate-executable)
-               (stringp nix-instantiate-executable))
-      (with-temp-buffer
-        (when (zerop
-               (call-process nix-instantiate-executable nil (list t null-device) nil
-                             "--strict" "--json" "--eval"
-                             "--argstr" "cand" package-name
-                             "-E"
-                             (concat
-                              "{cand}: let"
-                              "  pkgs = import <nixpkgs> {};"
-                              "  segments = builtins.filter builtins.isString"
-                              "    (builtins.split \"\\\\.\" cand);"
-                              "  pkg = builtins.foldl' (s: seg:"
-                              "    builtins.getAttr seg s) pkgs segments;"
-                              "  depInfo = deps: map (d:"
-                              "    { name = d.pname or d.name or \"unknown\";"
-                              "      storePath = d.outPath;"
-                              "    }) deps;"
-                              " in [ pkg.meta pkg.outPath pkg.version"
-                              "      (depInfo (pkg.buildInputs or []))"
-                              "      (depInfo (pkg.nativeBuildInputs or [])) ]")))
-          (goto-char (point-min))
-          (let ((result (json-parse-buffer)))
-            ;; result is [meta outPath version buildInputs nativeBuildInputs],
-            ;; a vector.  An attrset {meta=…; outPath=…} would
-            ;; collapse to the derivation's store path.
-            (let ((meta (and (vectorp result) (>= (length result) 1) (aref result 0)))
-                  (out (and (vectorp result) (>= (length result) 2) (aref result 1)))
-                  (ver (and (vectorp result) (>= (length result) 3) (aref result 2)))
-                  (build (and (vectorp result) (>= (length result) 4) (aref result 3)))
-                  (native (and (vectorp result) (>= (length result) 5) (aref result 4))))
-              (list (cons 'meta (and meta (not (eq meta :null)) meta))
-                    (cons 'outPath (and out (not (eq out :null)) out))
-                    (cons 'version (and ver (not (eq ver :null)) ver))
-                    (cons 'buildInputs (and build (vectorp build) (not (eq build :null)) build))
-                    (cons 'nativeBuildInputs (and native (vectorp native) (not (eq native :null)) native))))))))))
+    (car (nixos--call-nix-package-expr
+          (concat "{cand}: let"
+                  "  pkgs = import <nixpkgs> {};"
+                  "  segments = builtins.filter builtins.isString"
+                  "    (builtins.split \"\\\\.\" cand);"
+                  "  pkg = builtins.foldl' (s: seg:"
+                  "    builtins.getAttr seg s) pkgs segments;"
+                  nixos--package-expr-tail)
+          "--argstr" "cand" package-name))))
 
 
 ;;; Bookmarks
@@ -630,6 +669,34 @@ contents of `nixos-search-json-file' are shown."
                cand
                (list (cons 'meta data)))
             (user-error "Package `%s' not found" cand)))))))
+
+;;;###autoload
+(defun nixos-package-local ()
+  "Display the Nix package defined by ./default.nix in `default-directory'.
+Evaluates with `pkgs.callPackage ./default.nix {}'.
+
+No memoization — intended for local development where
+`default.nix' changes between invocations."
+  (interactive)
+  (let* ((full-dir (expand-file-name default-directory))
+         (display-name (abbreviate-file-name full-dir))
+         (default-directory full-dir))
+    (unless (file-exists-p "default.nix")
+      (user-error "No default.nix in %s" display-name))
+    (message "Evaluating %sdefault.nix..." display-name)
+    (pcase-let ((`(,info . ,stderr)
+                 (nixos--call-nix-package-expr
+                  (concat "let"
+                          "  pkgs = import <nixpkgs> {};"
+                          "  pkg = pkgs.callPackage ./default.nix {};"
+                          nixos--package-expr-tail))))
+      (if info
+          (progn
+            (let ((pkg-name (or (alist-get 'pname info) display-name)))
+              (nixos--display-package pkg-name info))
+            (setq nixos--browse-local t)
+            (setq nixos--browse-local-dir full-dir))
+        (user-error "%sdefault.nix:\n%s" display-name stderr)))))
 
 
 ;;; Thing-At-Point

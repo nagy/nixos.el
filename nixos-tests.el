@@ -738,19 +738,23 @@ converted to strings by stripping the leading colon."
 
 (ert-deftest nixos-package-meta-memoized ()
   "`nixos--package-meta' memoizes per-package and distinguishes keys."
-  ;; Simulate nix-instantiate by mocking call-process.
   (let ((nixos--package-meta-cache nil)
         (call-count 0))
-    (setq nix-instantiate-executable "nix-instantiate")
-    (cl-letf (((symbol-function 'call-process)
-               (lambda (program _infile _dest _display &rest args)
+    (cl-letf (((symbol-function 'nixos--call-nix-package-expr)
+               (lambda (_expr &rest _extra-args)
                  (setq call-count (1+ call-count))
-                 (let ((package-name (nth 5 args)))
-                   (insert
-                    (if (string= package-name "htop")
-                        "[{\"description\":\"htop viewer\",\"version\":\"3.5.1\"},\"/nix/store/htop-path\",\"3.5.1\",[],[]]"
-                      "[{\"description\":\"neovim editor\",\"version\":\"0.10\"},\"/nix/store/neovim-path\",\"0.10\",[],[]]"))
-                   0))))
+                 ;; Return a cons (ALIST . "") matching the expected format.
+                 (let* ((meta (make-hash-table :test 'equal))
+                        (pkg (if (= call-count 1) "htop" "neovim")))
+                   (puthash "description" (format "%s viewer" pkg) meta)
+                   (puthash "version" (if (string= pkg "htop") "3.5.1" "0.10") meta)
+                   (cons (list (cons 'meta meta)
+                               (cons 'outPath (format "/nix/store/%s-path" pkg))
+                               (cons 'version (if (string= pkg "htop") "3.5.1" "0.10"))
+                               (cons 'buildInputs [])
+                               (cons 'nativeBuildInputs [])
+                               (cons 'pname pkg))
+                         "")))))
       (unwind-protect
           (progn
             ;; First call: htop, should compute.
