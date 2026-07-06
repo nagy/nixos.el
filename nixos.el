@@ -141,6 +141,12 @@ Inherits from `package-help-section-name' when available."
 Inherits from `package-description' when available."
   :group 'nixos)
 
+(defface nixos-version
+  '((t :inherit (marginalia-version shadow)))
+  "Face for package versions in nixos detail and table buffers.
+Inherits from `marginalia-version' when available."
+  :group 'nixos)
+
 
 ;;; Cache
 
@@ -433,8 +439,10 @@ version, buildInputs and nativeBuildInputs."
             (let ((desc (gethash "description" meta-data)))
               (when (and desc (not (eq desc :null)))
                 (field "Description:" (propertize desc 'face 'nixos-description))))
-            (field "Version:" (or (gethash "version" meta-data)
-                                  (alist-get 'version info)))
+            (field "Version:" (propertize (or (gethash "version" meta-data)
+                                              (alist-get 'version info)
+                                              "")
+                                          'face 'nixos-version))
             (let ((hp (gethash "homepage" meta-data)))
               (when (and hp (not (eq hp :null)))
                 (setq nixos--browse-homepage hp)
@@ -861,7 +869,8 @@ Shows the package version and description."
   :buffer-name "*Nix Packages*"
   :columns [("Package" 40 t) ("Version" 15 t) ("Description" 0 nil)]
   :sort-key ("Package" . nil)
-  :extract-fields ((or (gethash "version" data) "")
+  :extract-fields ((propertize (or (gethash "version" data) "")
+                               'face 'nixos-version)
                    (propertize (nixos--slurp-description data)
                                'face 'nixos-description))
   :visit-fn nixos-package
