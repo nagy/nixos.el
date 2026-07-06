@@ -110,6 +110,22 @@ evaluates it — even for sub-attrsets deep in a list
 Rename the key to something else (`storePath`, `path`, etc.) to
 preserve the full attrset.
 
+**Dotted attribute paths with digit segments.**  Package names
+like `chickenPackages_5.chickenEggs.7off` contain segments
+starting with a digit, which is invalid Nix attribute-path
+syntax.  Use `builtins.foldl'` with `builtins.getAttr` instead
+of `${cand}` interpolation:
+
+```nix
+{cand}: let
+  pkgs = import <nixpkgs> {};
+  segments = builtins.filter builtins.isString
+    (builtins.split "\\." cand);
+  pkg = builtins.foldl' (s: seg:
+    builtins.getAttr seg s) pkgs segments;
+in …
+```
+
 ### Tabulated-list conventions
 
 - Entry format: `(id [id col1 col2...])`
@@ -130,8 +146,9 @@ preserve the full attrset.
 - Mock `nixos--package-meta` or `browse-url` when side-effects are
   undesirable.
 - Mock `call-process` to simulate `nix-instantiate` output when
-  testing `nixos--package-meta` directly.  Use the JSON array
-  format `[{…},"store-path"]` (see Nix expression gotcha above).
+  testing `nixos--package-meta` directly.  Use the 5-element JSON
+  array format `[{…},"store-path","version",[],[]]` (see Nix
+  expression gotcha above).
 - Tests that need `nix-mode` use `(skip-unless (fboundp 'nix-mode))`.
 - When testing `nixos--package-meta` memoization without loading
   `nix-mode`, use `(setq nix-instantiate-executable "nix-instantiate")`
@@ -141,15 +158,16 @@ preserve the full attrset.
 ### Package display layout
 
 `nixos--display-package` uses local `cl-labels` closures (`field`,
-`link`) to right-pad all field labels to 14 characters.  This keeps
-the shared helpers (`nixos--insert-field`, `nixos--insert-link`)
-untouched for option display.  The local `link` closure superseded
-`nixos--insert-link` — that function is now dead code and can be
-removed.
+`link`) to right-pad all field labels to 14 characters.
 
-The store path is face-colored by its on-disk status:
+Store paths are face-colored by on-disk status:
 `dired-directory` (exists, is a dir), default (exists, is a file),
-`error` (missing / GC'd).  The homepage URL uses the `link` face.
+`error` (missing / GC'd).  Homepage URLs use the `link` face.
+
+Build and native build inputs are shown below maintainers with
+clickable package names and store paths aligned to a global
+column.  Package names are `insert-text-button` widgets navigating
+to `nixos-package`.
 
 ### Functional purity
 
@@ -164,7 +182,14 @@ should be pure where possible — makes them testable without mocking.
 | nix-mode | soft | `nix-instantiate-executable` for package metadata |
 | marginalia | soft | annotator registry |
 | embark | soft | export + actions |
-| evil / evil-collections | soft | see evil-collections — not bundled here |
+
+### Faces
+
+Three custom faces (`nixos-package-name`, `nixos-field-label`,
+`nixos-description`) inherit from `package.el` faces when
+available, with built-in fallbacks (`bold`, `default`).  No
+`(require 'package)` needed — the `:inherit` list resolves
+left-to-right, skipping undefined faces.
 
 ## TODO
 - **Batch package metadata** — `nixos--package-meta` evaluates

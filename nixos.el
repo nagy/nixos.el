@@ -160,9 +160,10 @@ keys like pname, version, description, etc.")
 
 (defvar nixos--package-meta-cache nil
   "Hash table memoizing `nixos--package-meta' results.
-Keys are package names, values are alists with keys `meta' and
-`outPath'.  Memoized because nix store paths are immutable —
-the metadata for a given package name never changes.")
+Keys are package names, values are alists with keys `meta',
+`outPath', `version', `buildInputs' and `nativeBuildInputs'.
+Memoized because nix store paths are immutable — the metadata
+for a given package name never changes.")
 
 (defun nixos--options-load ()
   "Load NixOS options from `nixos-options-json-file' into cache.
@@ -329,22 +330,6 @@ This shows requisites, references, derivers, etc."
    ((or (hash-table-p value) (vectorp value))
     (json-serialize value))
    (t (prin1-to-string value))))
-
-(defun nixos--insert-field (label &optional value)
-  "Insert LABEL (bold) followed by VALUE on the same line.
-If VALUE is nil or empty, nothing is inserted after the label."
-  (insert (propertize label 'face 'bold))
-  (when (and value (not (string-empty-p value)))
-    (insert "  " value))
-  (insert "\n"))
-
-(defun nixos--insert-multiline (label value)
-  "Insert LABEL (bold) on its own line, followed by indented VALUE."
-  (when (and value (not (string-empty-p value)))
-    (insert (propertize label 'face 'bold) "\n")
-    (dolist (line (split-string value "\n"))
-      (insert "  " line "\n"))
-    (insert "\n")))
 
 (defun nixos-browse-search-url ()
   "Open the current option or package on search.nixos.org."
