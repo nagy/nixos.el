@@ -42,13 +42,6 @@ let
           --option flake-registry $PWD/empty-registry.json \
           search path:${nixpkgsPath} --json "" | jq --sort-keys > $out
       '';
-
-  postPatch = ''
-    substituteInPlace nixos.el \
-              --replace-fail '/etc/nixos-options.json' ${nixosOptionsJsonFinal}
-    substituteInPlace nixos.el \
-              --replace-fail '/etc/nixos-search.json' ${nixosSearchJson}
-  '';
 in
 melpaBuild (finalAttrs: {
   pname = "nixos";
@@ -57,7 +50,12 @@ melpaBuild (finalAttrs: {
 
   packageRequires = [ emacsPackages.nix-mode ];
 
-  inherit postPatch;
+  postPatch = ''
+    substituteInPlace nixos.el \
+      --replace-fail '/etc/nixos-options.json' ${nixosOptionsJsonFinal}
+    substituteInPlace nixos.el \
+      --replace-fail '/etc/nixos-search.json' ${nixosSearchJson}
+  '';
 
   turnCompilationWarningToError = true;
 
