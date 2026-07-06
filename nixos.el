@@ -120,6 +120,28 @@ substituted with a Nix store path at build time."
   :group 'nixos)
 
 
+
+;;; Faces
+
+(defface nixos-package-name
+  '((t :inherit (package-name bold) :height 1.2))
+  "Face for option and package names in nixos detail buffers.
+Inherits from `package-name' when available, otherwise `bold'."
+  :group 'nixos)
+
+(defface nixos-field-label
+  '((t :inherit (package-help-section-name bold)))
+  "Face for field labels in nixos detail buffers.
+Inherits from `package-help-section-name' when available."
+  :group 'nixos)
+
+(defface nixos-description
+  '((t :inherit (package-description default)))
+  "Face for descriptions in nixos detail buffers.
+Inherits from `package-description' when available."
+  :group 'nixos)
+
+
 ;;; Cache
 
 (defvar nixos--options-cache nil
@@ -355,10 +377,10 @@ If VALUE is nil or empty, nothing is inserted after the label."
         (nixos-browse-mode)
         (nixos--browse-setup 'option name)
         ;; Title
-        (insert (propertize name 'face 'org-document-title) "\n\n")
+        (insert (propertize name 'face 'nixos-package-name) "\n\n")
         ;; Fields
         (cl-labels ((field (label value)
-                      (insert (propertize (format "%-14s" label) 'face 'bold))
+                      (insert (propertize (format "%-14s" label) 'face 'nixos-field-label))
                       (when (and value (not (string-empty-p value)))
                         (insert value))
                       (insert "\n")))
@@ -367,7 +389,7 @@ If VALUE is nil or empty, nothing is inserted after the label."
             (field "Default:" def))
           (let ((desc (gethash "description" data)))
             (when (and desc (not (eq desc :null)))
-              (field "Description:" desc)))
+              (field "Description:" (propertize desc 'face 'nixos-description))))
           (let ((example (nixos--value-to-string (gethash "example" data))))
             (field "Example:" example))
           (let ((decls (gethash "declarations" data)))
@@ -392,14 +414,14 @@ INFO is an alist from `nixos--package-meta' with keys meta and outPath."
         (nixos-browse-mode)
         (nixos--browse-setup 'package name out-path)
         ;; Title
-        (insert (propertize name 'face 'org-document-title) "\n\n")
+        (insert (propertize name 'face 'nixos-package-name) "\n\n")
         (cl-labels ((field (label value)
-                      (insert (propertize (format "%-14s" label) 'face 'bold))
+                      (insert (propertize (format "%-14s" label) 'face 'nixos-field-label))
                       (when (and value (not (string-empty-p value)))
                         (insert value))
                       (insert "\n"))
                     (link (label url)
-                      (insert (propertize (format "%-14s" label) 'face 'bold))
+                      (insert (propertize (format "%-14s" label) 'face 'nixos-field-label))
                       (when url
                         (insert (propertize url
                                             'face 'link
@@ -420,7 +442,7 @@ INFO is an alist from `nixos--package-meta' with keys meta and outPath."
           (when meta-data
             (let ((desc (gethash "description" meta-data)))
               (when (and desc (not (eq desc :null)))
-                (field "Description:" desc)))
+                (field "Description:" (propertize desc 'face 'nixos-description))))
             (field "Version:" (or (gethash "version" meta-data)
                                   (alist-get 'version info)))
             (let ((hp (gethash "homepage" meta-data)))
