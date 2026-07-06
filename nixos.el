@@ -417,10 +417,14 @@ convention."
         (set-buffer-modified-p nil)))
     (pop-to-buffer buf)))
 
-(defun nixos--display-package (name info)
+(defun nixos--display-package (name info &optional local)
   "Create a formatted detail buffer for Nix package NAME with INFO.
 INFO is an alist from `nixos--package-meta' with keys meta, outPath,
-version, buildInputs and nativeBuildInputs."
+version, buildInputs and nativeBuildInputs.
+
+When LOCAL is non-nil, do not `cd' into the store path even if it
+exists — the buffer is for a local project, not an installed Nix
+package."
   (let ((meta-data (alist-get 'meta info))
         (out-path (alist-get 'outPath info))
         (buf (get-buffer-create (format "*nixos-package %s*" name))))
@@ -451,7 +455,7 @@ version, buildInputs and nativeBuildInputs."
                                             'dired-directory)
                                            ((file-exists-p out-path) nil)
                                            (t 'error))))
-            (if (file-directory-p out-path)
+            (if (and (not local) (file-directory-p out-path))
                 (cd out-path)))
           ;; Meta fields (hash table from parsed JSON)
           (when meta-data
@@ -700,7 +704,7 @@ No memoization — intended for local development where
       (if info
           (progn
             (let ((pkg-name (or (alist-get 'pname info) display-name)))
-              (nixos--display-package pkg-name info))
+              (nixos--display-package pkg-name info t))
             (setq nixos--browse-local t)
             (setq nixos--browse-local-dir full-dir))
         (user-error "%sdefault.nix:\n%s" display-name stderr)))))
