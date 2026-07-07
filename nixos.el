@@ -222,12 +222,17 @@ from the JSON files."
         (pname (and (hash-table-p inner) (gethash "pname" inner))))
     (or desc pname "")))
 
+(defun nixos--trim-description (desc)
+  "Collapse newlines in DESC and truncate to `nixos-annotation-width' characters."
+  (when (and desc (not (string-empty-p desc)))
+    (string-limit (string-replace "\n" " " desc)
+                  nixos-annotation-width)))
+
 (defun nixos--annotate (description)
   "Return a right-aligned annotation string for DESCRIPTION."
-  (when (and description (not (string-empty-p description)))
+  (when-let* ((trimmed (nixos--trim-description description)))
     (concat (propertize " " 'display '(space :align-to center))
-            (string-limit (string-replace "\n" " " description)
-                          nixos-annotation-width))))
+            trimmed)))
 
 
 ;;; Options
@@ -968,7 +973,8 @@ to filter the view in-place." typestr typestr mode-map visit search-url refresh)
   :columns [("Option" 50 t) ("Type" 20 t) ("Description" 0 nil)]
   :sort-key ("Option" . nil)
   :extract-fields ((or (gethash "type" data) "")
-                   (propertize (nixos--slurp-description data)
+                   (propertize (or (nixos--trim-description
+                                    (nixos--slurp-description data)) "")
                                'face 'nixos-description))
   :visit-fn nixos-option
   :url-fmt nixos-option-search-url-template
@@ -1046,7 +1052,8 @@ Shows the package version and description."
   :sort-key ("Package" . nil)
   :extract-fields ((propertize (or (gethash "version" data) "")
                                'face 'nixos-version)
-                   (propertize (nixos--slurp-description data)
+                   (propertize (or (nixos--trim-description
+                                    (nixos--slurp-description data)) "")
                                'face 'nixos-description))
   :visit-fn nixos-package
   :url-fmt nixos-package-search-url-template
