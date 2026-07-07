@@ -318,6 +318,15 @@ nixpkgs package.")
   "Full directory path of the local package, if `nixos--browse-local' is non-nil.
 Used by `nixos-browse-refresh' to re-evaluate in the correct directory.")
 
+(defvar-local nixos--browse-url nil
+  "Non-nil if the current browse buffer shows a URL package.
+Set by `nixos-package-url', used by `nixos-browse-refresh'
+to re-evaluate the URL instead of looking up a nixpkgs package.")
+
+(defvar-local nixos--browse-url-str nil
+  "The URL of the package, if `nixos--browse-url' is non-nil.
+Used by `nixos-browse-refresh' to re-fetch the same URL.")
+
 (defun nixos--browse-setup (type name &optional out-path)
   "Configure the current buffer for browsing TYPE (option or package) NAME."
   (setq nixos--browse-type type
@@ -325,7 +334,9 @@ Used by `nixos-browse-refresh' to re-evaluate in the correct directory.")
         nixos--browse-out-path out-path
         nixos--browse-homepage nil
         nixos--browse-local nil
-        nixos--browse-local-dir nil))
+        nixos--browse-local-dir nil
+        nixos--browse-url nil
+        nixos--browse-url-str nil))
 
 (defun nixos-browse-show-requisites ()
   "Open the store path of the current package in `nix-store-path-mode'.
@@ -387,10 +398,12 @@ convention."
   (let ((pt (point)))
     (cl-case nixos--browse-type
       (option (nixos-option nixos--browse-name))
-      (package (if nixos--browse-local
-                   (let ((default-directory nixos--browse-local-dir))
-                     (nixos-package-local))
-                 (nixos-package nixos--browse-name)))
+      (package (cond (nixos--browse-url
+                      (nixos-package-url nixos--browse-url-str))
+                     (nixos--browse-local
+                      (let ((default-directory nixos--browse-local-dir))
+                        (nixos-package-local)))
+                     (t (nixos-package nixos--browse-name))))
       (t (user-error "Unknown browse type %s" nixos--browse-type)))
     (goto-char pt)))
 
@@ -555,6 +568,29 @@ package."
    "     (pkg.pname or \"\")"
    "     (pkg.src.meta.homepage or pkg.src.url or \"\") ]"))
 
+(defun nixos--parse-package-result (result)
+  "Parse the JSON RESULT vector from nix-instantiate into an alist.
+RESULT is the parsed JSON vector:
+  [meta outPath version buildInputs nativeBuildInputs pname repository]
+Returns a cons cell (ALIST . \"\") on success, or (nil . ERROR-MSG)."
+  (if (not (vectorp result))
+      (cons nil (format "Unexpected JSON type (expected array): %S" result))
+    (let ((meta (and (>= (length result) 1) (aref result 0)))
+          (out (and (>= (length result) 2) (aref result 1)))
+          (ver (and (>= (length result) 3) (aref result 2)))
+          (build (and (>= (length result) 4) (aref result 3)))
+          (native (and (>= (length result) 5) (aref result 4)))
+          (pname (and (>= (length result) 6) (aref result 5)))
+          (repo (and (>= (length result) 7) (aref result 6))))
+      (cons (list (cons 'meta (and meta (not (eq meta :null)) meta))
+                  (cons 'outPath (and out (not (eq out :null)) out))
+                  (cons 'version (and ver (not (eq ver :null)) ver))
+                  (cons 'buildInputs (and build (vectorp build) (not (eq build :null)) build))
+                  (cons 'nativeBuildInputs (and native (vectorp native) (not (eq native :null)) native))
+                  (cons 'pname (and pname (not (eq pname :json-false)) pname))
+                  (cons 'repository (and repo (not (eq repo :json-false)) (not (string-empty-p repo)) repo)))
+            ""))))
+
 (defun nixos--call-nix-package-expr (expr &rest extra-args)
   "Call nix-instantiate with EXPR and EXTRA-ARGS, return (RESULT . STDERR).
 EXTRA-ARGS are passed directly to call-process before \"-E\".
@@ -575,25 +611,37 @@ entirely if nix-instantiate is unavailable."
               (if (zerop exit-code)
                   (progn
                     (goto-char (point-min))
-                    (let ((result (json-parse-buffer)))
-                      ;; result is [meta outPath version buildInputs nativeBuildInputs pname repository],
-                      ;; a vector.  An attrset {meta=…; outPath=…} would
-                      ;; collapse to the derivation's store path.
-                      (let ((meta (and (vectorp result) (>= (length result) 1) (aref result 0)))
-                            (out (and (vectorp result) (>= (length result) 2) (aref result 1)))
-                            (ver (and (vectorp result) (>= (length result) 3) (aref result 2)))
-                            (build (and (vectorp result) (>= (length result) 4) (aref result 3)))
-                            (native (and (vectorp result) (>= (length result) 5) (aref result 4)))
-                            (pname (and (vectorp result) (>= (length result) 6) (aref result 5)))
-                            (repo (and (vectorp result) (>= (length result) 7) (aref result 6))))
-                        (cons (list (cons 'meta (and meta (not (eq meta :null)) meta))
-                                    (cons 'outPath (and out (not (eq out :null)) out))
-                                    (cons 'version (and ver (not (eq ver :null)) ver))
-                                    (cons 'buildInputs (and build (vectorp build) (not (eq build :null)) build))
-                                    (cons 'nativeBuildInputs (and native (vectorp native) (not (eq native :null)) native))
-                                    (cons 'pname (and pname (not (eq pname :json-false)) pname))
-                                    (cons 'repository (and repo (not (eq repo :json-false)) (not (string-empty-p repo)) repo)))
-                              ""))))
+                    (nixos--parse-package-result (json-parse-buffer)))
+                (cons nil (with-temp-buffer
+                            (insert-file-contents stderr-file)
+                            (buffer-string))))))
+        (delete-file stderr-file)))))
+
+(defun nixos--call-nix-url-expr (url)
+  "Call nix-instantiate with a tarball URL, return (RESULT . STDERR).
+Downloads the tarball at URL via builtins.fetchTarball, imports
+it with pkgs.callPackage, and extracts package metadata.
+
+Uses --impure since the tarball is fetched without a pinned hash.
+Returns the same format as `nixos--call-nix-package-expr'."
+  (when (and (boundp 'nix-instantiate-executable)
+             (stringp nix-instantiate-executable))
+    (let* ((stderr-file (make-temp-file "nixos-stderr-"))
+           (expr (concat "{url}: let"
+                         "  pkgs = import <nixpkgs> {};"
+                         "  pkg = pkgs.callPackage"
+                         "    (builtins.fetchTarball url) {};"
+                         nixos--package-expr-tail))
+           (args (list nix-instantiate-executable nil (list t stderr-file) nil
+                       "--impure" "--strict" "--json" "--eval" "-E" expr
+                       "--argstr" "url" url)))
+      (unwind-protect
+          (with-temp-buffer
+            (let ((exit-code (apply 'call-process args)))
+              (if (zerop exit-code)
+                  (progn
+                    (goto-char (point-min))
+                    (nixos--parse-package-result (json-parse-buffer)))
                 (cons nil (with-temp-buffer
                             (insert-file-contents stderr-file)
                             (buffer-string))))))
@@ -636,7 +684,9 @@ Intended for use as `bookmark-make-record-function'."
     (name . ,nixos--browse-name)
     (handler . nixos--bookmark-jump)
     (local . ,nixos--browse-local)
-    (local-dir . ,nixos--browse-local-dir)))
+    (local-dir . ,nixos--browse-local-dir)
+    (browse-url . ,nixos--browse-url)
+    (browse-url-str . ,nixos--browse-url-str)))
 
 ;;;###autoload
 (defun nixos--bookmark-jump (bookmark)
@@ -645,13 +695,17 @@ Called by the bookmark system."
   (let ((type (alist-get 'type bookmark))
         (name (alist-get 'name bookmark))
         (local (alist-get 'local bookmark))
-        (local-dir (alist-get 'local-dir bookmark)))
+        (local-dir (alist-get 'local-dir bookmark))
+        (browse-url (alist-get 'browse-url bookmark))
+        (browse-url-str (alist-get 'browse-url-str bookmark)))
     (cl-case type
       (option (nixos-option name))
-      (package (if local
-                   (let ((default-directory local-dir))
-                     (nixos-package-local))
-                 (nixos-package name)))
+      (package (cond (browse-url
+                      (nixos-package-url browse-url-str))
+                     (local
+                      (let ((default-directory local-dir))
+                        (nixos-package-local)))
+                     (t (nixos-package name))))
       (t (user-error "Unknown bookmark type %s" type)))))
 
 
@@ -725,6 +779,27 @@ No memoization — intended for local development where
             (setq nixos--browse-local t)
             (setq nixos--browse-local-dir full-dir))
         (user-error "%sdefault.nix:\n%s" display-name stderr)))))
+
+;;;###autoload
+(defun nixos-package-url (url)
+  "Display the Nix package defined by a tarball at URL.
+Downloads and evaluates the tarball via
+`builtins.fetchTarball' + `pkgs.callPackage'.
+
+No memoization — intended for remote development where the
+tarball may change between invocations."
+  (interactive "sNix package URL: ")
+  (let ((display-name (file-name-base (file-name-sans-extension (url-unhex-string url)))))
+    (message "Evaluating %s..." url)
+    (pcase-let ((`(,info . ,stderr)
+                 (nixos--call-nix-url-expr url)))
+      (if info
+          (progn
+            (let ((pkg-name (or (alist-get 'pname info) display-name)))
+              (nixos--display-package pkg-name info t))
+            (setq nixos--browse-url t)
+            (setq nixos--browse-url-str url))
+        (user-error "URL %s:\n%s" url stderr)))))
 
 
 ;;; Thing-At-Point

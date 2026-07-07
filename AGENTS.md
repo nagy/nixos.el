@@ -24,11 +24,13 @@ Single file (`nixos.el`), sections roughly:
 1. defgroup / defcustom
 2. Cache (hash-table vars, load functions, `nixos-refresh-cache`)
 3. Helpers (`nixos--slurp-description`, `nixos--package-expr-tail`,
-   `nixos--call-nix-package-expr`)
+   `nixos--parse-package-result`, `nixos--call-nix-package-expr`,
+   `nixos--call-nix-url-expr`)
 4. Options / Packages collection + annotation
 5. Browse modes (`nixos-browse-mode`, `nixos--define-browse-mode`
    macro for browse-options/packages)
-6. `nixos-package` / `nixos-package-local` interactive commands
+6. `nixos-package` / `nixos-package-local` / `nixos-package-url`
+   interactive commands
 7. Bookmarks, thingatpt, eldoc
 8. Marginalia annotators, Embark export + actions
 
@@ -113,6 +115,25 @@ evaluates it — even for sub-attrsets deep in a list
 Rename the key to something else (`storePath`, `path`, etc.) to
 preserve the full attrset.
 
+**URL package evaluation.**  `nixos-package-url` downloads and
+evaluates a tarball URL via `builtins.fetchTarball` +
+`pkgs.callPackage`.  Uses `--impure` since the tarball is fetched
+without a pinned hash.  The expression passes the URL via
+`--argstr` to avoid quoting issues:
+
+```nix
+{url}: let
+  pkgs = import <nixpkgs> {};
+  pkg = pkgs.callPackage (builtins.fetchTarball url) {};
+  …
+in [pkg.meta pkg.outPath …]
+```
+
+The same `nixos--package-expr-tail` constant is shared across all
+three package evaluation paths (nixpkgs, local, URL).  Result
+parsing is handled by `nixos--parse-package-result`, a shared
+helper that parses the JSON vector into an alist.
+
 **Dotted attribute paths with digit segments.**  Package names
 like `chickenPackages_5.chickenEggs.7off` contain segments
 starting with a digit, which is invalid Nix attribute-path
@@ -146,8 +167,9 @@ in …
   bind the cache vars directly (no JSON file needed).
 - Mock `switch-to-buffer` / `pop-to-buffer` with `cl-letf` to test
   display without UI.
-- Mock `nixos--package-meta`, `nixos--call-nix-package-expr`, or
-  `browse-url` when side-effects are undesirable.
+- Mock `nixos--package-meta`, `nixos--call-nix-package-expr`,
+  `nixos--call-nix-url-expr`, or `browse-url` when side-effects
+  are undesirable.
 - When testing `nixos--package-meta` memoization, mock
   `nixos--call-nix-package-expr` to return a cons `(ALIST . "")`.
   Mocking `call-process` directly is fragile: `apply` in

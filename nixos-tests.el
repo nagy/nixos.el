@@ -807,5 +807,160 @@ converted to strings by stripping the leading colon."
   (nixos-refresh-cache)
   (should-not nixos--package-meta-cache))
 
+
+;;; URL package support
+
+(ert-deftest nixos-parse-package-result-valid ()
+  "`nixos--parse-package-result' parses a valid result vector."
+  (let* ((meta (make-hash-table :test 'equal))
+         (vec (vector meta "/nix/store/pkg" "1.0" [] [] nil nil)))
+    (puthash "description" "Test package" meta)
+    (puthash "version" "1.0" meta)
+    (let ((result (nixos--parse-package-result vec)))
+      (should (consp result))
+      (should (string= (cdr result) ""))
+      (let ((alist (car result)))
+        (should (equal (alist-get 'outPath alist) "/nix/store/pkg"))
+        (should (eq (alist-get 'meta alist) meta))
+        (should (equal (alist-get 'version alist) "1.0"))))))
+
+(ert-deftest nixos-parse-package-result-invalid ()
+  "`nixos--parse-package-result' returns an error for non-vectors."
+  (let ((result (nixos--parse-package-result "not-a-vector")))
+    (should (consp result))
+    (should-not (car result))
+    (should (string-match-p "Unexpected JSON type" (cdr result)))
+    (should (string-match-p "expected array" (cdr result)))))
+
+(ert-deftest nixos-parse-package-result-null-fields ()
+  "`nixos--parse-package-result' handles null fields gracefully."
+  (let* ((meta (make-hash-table :test 'equal))
+         (vec (vector meta :null :null [] [] :json-false :json-false)))
+    (puthash "description" "Null-safe" meta)
+    (let ((result (nixos--parse-package-result vec)))
+      (should (consp result))
+      (should (string= (cdr result) ""))
+      (let ((alist (car result)))
+        (should-not (alist-get 'outPath alist))
+        (should-not (alist-get 'version alist))
+        (should-not (alist-get 'pname alist))
+        (should-not (alist-get 'repository alist))))))
+
+(ert-deftest nixos-package-url-noninteractive ()
+  "`nixos-package-url' displays package metadata from a mock URL."
+  (let ((displayed nil)
+        (meta-ht (make-hash-table :test 'equal)))
+    (puthash "description" "A URL package" meta-ht)
+    (puthash "version" "2.0" meta-ht)
+    (puthash "homepage" "https://example.com/" meta-ht)
+    (cl-letf (((symbol-function 'pop-to-buffer)
+               (lambda (buf) (setq displayed buf) (set-buffer buf)))
+              ((symbol-function 'nixos--call-nix-url-expr)
+               (lambda (_url)
+                 (let ((vec (vector meta-ht
+                                    "/nix/store/urlpkg"
+                                    "2.0"
+                                    '[] '[]
+                                    "urlpkgname"
+                                    nil)))
+                   (nixos--parse-package-result vec)))))
+      (nixos-package-url "https://example.com/archive.tar.gz")
+      (should displayed)
+      (should (buffer-live-p displayed))
+      (with-current-buffer displayed
+        (let ((content (buffer-string)))
+          (should (string-match-p "urlpkgname" content))
+          (should (string-match-p "A URL package" content))
+          (should (string-match-p "2.0" content))
+          (should (string-match-p "https://example.com/" content))
+          (should (string-match-p "/nix/store/urlpkg" content))
+          ;; Browse metadata is set
+          (should (eq nixos--browse-type 'package))
+          (should (equal nixos--browse-name "urlpkgname"))
+          (should (equal nixos--browse-out-path "/nix/store/urlpkg"))
+          ;; URL state is set
+          (should nixos--browse-url)
+          (should (equal nixos--browse-url-str "https://example.com/archive.tar.gz"))
+          ;; not local
+          (should-not nixos--browse-local)))
+      (kill-buffer displayed))))
+
+(ert-deftest nixos-package-url-error ()
+  "`nixos-package-url' signals an error when nix-instantiate fails."
+  (cl-letf (((symbol-function 'nixos--call-nix-url-expr)
+             (lambda (_url) (cons nil "fetch failed"))))
+    (should-error (nixos-package-url "https://example.com/bad.tar.gz"))))
+
+(ert-deftest nixos-browse-refresh-url ()
+  "`nixos-browse-refresh' re-evaluates the URL for URL packages."
+  (let ((browse-buf nil)
+        (refreshed nil)
+        (meta-ht (make-hash-table :test 'equal)))
+    (puthash "description" "refresh test" meta-ht)
+    (cl-letf (((symbol-function 'pop-to-buffer)
+               (lambda (buf) (setq browse-buf buf) (set-buffer buf)))
+              ((symbol-function 'nixos--call-nix-url-expr)
+               (lambda (_url)
+                 (let ((vec (vector meta-ht "/nix/store/ref" "1.0" '[] '[] "refpkg" nil)))
+                   (nixos--parse-package-result vec)))))
+      (nixos-package-url "https://example.com/pkg.tar.gz")
+      (should (equal nixos--browse-url-str "https://example.com/pkg.tar.gz"))
+      (cl-letf (((symbol-function 'nixos-package-url)
+                 (lambda (url) (setq refreshed url))))
+        (nixos-browse-refresh)
+        (should (equal refreshed "https://example.com/pkg.tar.gz")))
+      (kill-buffer browse-buf))))
+
+(ert-deftest nixos-bookmark-url ()
+  "Bookmark records for URL packages include the URL state."
+  (let ((meta-ht (make-hash-table :test 'equal)))
+    (puthash "description" "url-pkg" meta-ht)
+    (cl-letf (((symbol-function 'pop-to-buffer)
+               (lambda (buf) (set-buffer buf)))
+              ((symbol-function 'nixos--call-nix-url-expr)
+               (lambda (_url)
+                 (let ((vec (vector meta-ht "/nix/store/u" "3.0" '[] '[] "urlpkg" nil)))
+                   (nixos--parse-package-result vec)))))
+      (nixos-package-url "https://example.com/bkmk.tar.gz")
+      (let ((rec (nixos--bookmark-make-record)))
+        (should (eq (alist-get 'type rec) 'package))
+        (should (equal (alist-get 'name rec) "urlpkg"))
+        (should (eq (alist-get 'handler rec) 'nixos--bookmark-jump))
+        (should (eq (alist-get 'browse-url rec) t))
+        (should (equal (alist-get 'browse-url-str rec) "https://example.com/bkmk.tar.gz")))
+      (kill-buffer))))
+
+(ert-deftest nixos-bookmark-jump-url ()
+  "`nixos--bookmark-jump' calls `nixos-package-url' for URL bookmarks."
+  (let ((called-url nil))
+    (cl-letf (((symbol-function 'pop-to-buffer)
+               (lambda (buf) (set-buffer buf)))
+              ((symbol-function 'nixos-package-url)
+               (lambda (url) (setq called-url url))))
+      (nixos--bookmark-jump '((type . package)
+                              (name . "somepkg")
+                              (browse-url . t)
+                              (browse-url-str . "https://example.com/from-bookmark.tar.gz")))
+      (should (equal called-url "https://example.com/from-bookmark.tar.gz")))))
+
+(ert-deftest nixos-package-url-fallback-name ()
+  "`nixos-package-url' uses the URL basename when pname is absent."
+  (let ((displayed nil)
+        (meta-ht (make-hash-table :test 'equal)))
+    (puthash "description" "No pname" meta-ht)
+    (cl-letf (((symbol-function 'pop-to-buffer)
+               (lambda (buf) (setq displayed buf) (set-buffer buf)))
+              ((symbol-function 'nixos--call-nix-url-expr)
+               (lambda (_url)
+                 (let ((vec (vector meta-ht "/nix/store/nm" "1.2" '[] '[] :json-false nil)))
+                   (nixos--parse-package-result vec)))))
+      (nixos-package-url "https://example.com/my-package.tar.gz")
+      (should displayed)
+      (with-current-buffer displayed
+        ;; Fallback to URL basename (without extension)
+        (should (string-match-p "my-package" (buffer-string)))
+        (should (equal nixos--browse-name "my-package")))
+      (kill-buffer displayed))))
+
 (provide 'nixos-tests)
 ;;; nixos-tests.el ends here
