@@ -24,6 +24,7 @@
 ;; Then: M-x ert RET nixos
 
 (require 'nixos)
+(require 'ol-nixos)
 (require 'ert)
 (require 'cl-lib)
 
@@ -961,6 +962,45 @@ converted to strings by stripping the leading colon."
         (should (string-match-p "my-package" (buffer-string)))
         (should (equal nixos--browse-name "my-package")))
       (kill-buffer displayed))))
+
+
+;;; Org link tests
+
+(ert-deftest nixos-org-package-open-package ()
+  "`nixos-org-package-open' dispatches plain name to `nixos-package'."
+  (let ((called nil))
+    (cl-letf (((symbol-function 'nixos-package)
+               (lambda (name) (setq called (cons 'package name)))))
+      (nixos-org-package-open "htop")
+      (should (equal called '(package . "htop"))))))
+
+(ert-deftest nixos-org-package-open-url ()
+  "`nixos-org-package-open' dispatches URL to `nixos-package-url'."
+  (let ((called nil))
+    (cl-letf (((symbol-function 'nixos-package-url)
+               (lambda (url) (setq called (cons 'url url)))))
+      (nixos-org-package-open "https://example.com/pkg.tar.gz")
+      (should (equal called '(url . "https://example.com/pkg.tar.gz"))))))
+
+(ert-deftest nixos-org-package-open-local ()
+  "`nixos-org-package-open' dispatches local path to `nixos-package-local'."
+  (let ((called nil))
+    (cl-letf (((symbol-function 'nixos-package-local)
+               (lambda () (setq called 'local))))
+      (nixos-org-package-open "~/my-project/")
+      (should (eq called 'local)))))
+
+(ert-deftest nixos-org-package-export-html ()
+  "`nixos-org-package-export' produces an HTML link."
+  (let ((result (nixos-org-package-export "htop" "htop" 'html nil)))
+    (should (string-match-p "search.nixos.org/packages" result))
+    (should (string-match-p "htop" result))))
+
+(ert-deftest nixos-org-package-export-plain ()
+  "`nixos-org-package-export' falls back to plain text for unknown backend."
+  (let ((result (nixos-org-package-export "htop" nil 'ascii nil)))
+    (should (equal result "htop"))))
+
 
 (provide 'nixos-tests)
 ;;; nixos-tests.el ends here

@@ -1107,5 +1107,9 @@ Shows the package version and description."
   (add-to-list 'embark-keymap-alist
                '(nixos-package . nixos-embark-package-map)))
 
+;; Org link support — loaded only when Org is present.
+(with-eval-after-load 'org
+  (require 'ol-nixos))
+
 (provide 'nixos)
 ;;; nixos.el ends here
