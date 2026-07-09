@@ -26,6 +26,7 @@ rec {
           (emacs.pkgs.withPackages (e: [
             e.magit-section
             e.modus-themes
+            e.marginalia
             nixosEl
           ]))
           pkgs.xvfb-run
@@ -55,7 +56,7 @@ rec {
           xvfb-run --server-args="-screen 0 1024x576x24" \
             emacs --quick -f package-initialize --fullscreen \
             -l modus-themes \
-            --font Iosevka\ 18 \
+            --font Iosevka\ 11 \
             -l $screenshotScript \
             -l $emacsCodeFile
       '';
@@ -67,7 +68,8 @@ rec {
     mkEmacsScreenshot {
       inherit light;
       emacsCode = ''
-        (require 'dired)   ; for dired-directory face on store path
+        (require 'dired)        ; for dired-directory face on store path
+        (require 'marginalia)   ; for marginalia-version face on version
         (require 'nix-mode)
         (require 'nixos)
         (add-to-list 'display-buffer-alist
