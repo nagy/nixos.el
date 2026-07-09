@@ -31,7 +31,6 @@ rec {
           ]))
           pkgs.xvfb-run
           pkgs.iosevka
-          pkgs.imagemagick
           pkgs.nixVersions.latest
           pkgs.htop  # so the store path exists on disk → blue dired-directory face
         ];
@@ -43,11 +42,14 @@ rec {
           (tool-bar-mode -1)
           (toggle-scroll-bar -1)
           (message nil)                            ; clear out echo area
-          (defun screenshot-this-frame-and-exit ()
-            (kill-emacs
-              (call-process "import" nil nil nil
-                            "-window" (frame-parameter (car (frame-list)) 'window-id) (getenv "out"))))
-          (run-at-time 2 nil #'screenshot-this-frame-and-exit)
+          (defun screenshot-capture ()
+            "Export the selected frame as PNG and exit."
+            (let ((data (x-export-frames (selected-frame) 'png)))
+              (with-temp-buffer
+                (set-buffer-multibyte nil)
+                (insert data)
+                (write-region (point-min) (point-max) (getenv "out")))
+              (kill-emacs 0)))
         '';
       }
       ''
@@ -74,7 +76,17 @@ rec {
         (require 'nixos)
         (add-to-list 'display-buffer-alist
                      '("\\*nixos-" display-buffer-same-window))
-        (run-at-time 1 nil (lambda () (nixos-package "htop")))
+        (defun screenshot-poll ()
+          "Poll until the target buffer is displayed, then capture."
+          (if (and (get-buffer "*nixos-package htop*")
+                   (get-buffer-window "*nixos-package htop*"))
+              (progn
+                (redisplay t)
+                (screenshot-capture))
+            (run-at-time 0.05 nil #'screenshot-poll)))
+        (run-at-time 1 nil (lambda ()
+                             (nixos-package "htop")
+                             (run-at-time 0.2 nil #'screenshot-poll)))
       '';
     };
 
@@ -92,14 +104,13 @@ rec {
 
   optimizePng =
     image:
-    pkgs.runCommandLocal ("opt-" + image.name)
+    pkgs.runCommandLocal ("pq-" + image.name)
       {
         inherit image;
-        optlevel = 9;
-        nativeBuildInputs = [ pkgs.optipng ];
+        nativeBuildInputs = [ pkgs.pngquant ];
       }
       ''
-        optipng -strip all -o$optlevel "$image" -out $out
+        pngquant --speed 1 --force --output $out "$image"
       '';
 
   svgDualThemeText = pkgs.writeText "myfile.svg" ''
