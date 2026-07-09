@@ -32,6 +32,7 @@ rec {
           pkgs.iosevka
           pkgs.imagemagick
           pkgs.nixVersions.latest
+          pkgs.htop  # so the store path exists on disk → blue dired-directory face
         ];
         emacsCodeFile = pkgs.writeText "emacscode.el" emacsCode;
         screenshotScript = pkgs.writeText "script.el" ''
@@ -66,11 +67,12 @@ rec {
     mkEmacsScreenshot {
       inherit light;
       emacsCode = ''
+        (require 'dired)   ; for dired-directory face on store path
         (require 'nix-mode)
         (require 'nixos)
-        (run-at-time 1 nil (lambda ()
-                             (nixos-package "htop")
-                             (delete-other-windows)))
+        (add-to-list 'display-buffer-alist
+                     '("\\*nixos-" display-buffer-same-window))
+        (run-at-time 1 nil (lambda () (nixos-package "htop")))
       '';
     };
 
