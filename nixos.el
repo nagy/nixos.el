@@ -472,10 +472,11 @@ package."
                     (link (label url)
                       (insert (propertize (format "%-14s" label) 'face 'nixos-field-label))
                       (when url
-                        (insert (propertize url
+                        (insert-text-button url
+                                            'action (lambda (_) (browse-url url))
+                                            'follow-link t
                                             'face 'link
-                                            'mouse-face 'highlight
-                                            'help-echo url)))
+                                            'help-echo (format "Browse %s" url)))
                       (insert "\n")))
           (when out-path
             (field "Store path:"
