@@ -61,8 +61,10 @@ melpaBuild (finalAttrs: {
 
   checkPhase = ''
     runHook preCheck
+    emacs --batch -L . --eval '(setq byte-compile-error-on-warn t)' \
+      -f batch-byte-compile nixos-tests.el
     emacs --batch -L . \
-      -l nixos-tests.el \
+      -l nixos-tests.elc \
       -f ert-run-tests-batch-and-exit
     runHook postCheck
   '';

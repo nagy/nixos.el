@@ -31,7 +31,7 @@ Single file (`nixos.el`), sections roughly:
    macro for browse-options/packages)
 6. `nixos-package` / `nixos-package-local` / `nixos-package-url`
    interactive commands
-7. Bookmarks, thingatpt, eldoc
+7. Bookmarks (detail + table), thingatpt, eldoc
 8. Marginalia annotators, Embark export + actions
 
 ## Conventions
@@ -155,11 +155,41 @@ in …
 - Entry format: `(id [id col1 col2...])`
 - `--current-name` wraps `tabulated-list-get-id` with a user-error
 - `--entries` accepts optional `name-list` to support Embark export
+- The browse-table commands accept an optional `name-prefix` that
+  personalizes the buffer name (e.g. `*NixOS Options: htop*`),
+  allowing multiple searches to coexist.  When non-nil, the filtered
+  `name-list` and `name-prefix` are stored in buffer-local variables
+  `nixos--browse-name-list` and `nixos--browse-name-prefix` so
+  `refresh` (`g`) preserves the filter.
 - Mode map inherits from `tabulated-list-mode-map`
 - `hl-line-mode 1` enabled by default
+- The modes set `bookmark-make-record-function` to
+  `nixos--browse-table-bookmark-make-record` for saving filtered
+  table views.
+
+### Bookmarks
+
+Two kinds of bookmarks are supported:
+
+**Detail bookmarks** — set from `nixos-browse-mode` buffers
+(single option/package).  Record fields: `type`, `name`,
+`local`, `local-dir`, `browse-url`, `browse-url-str`.
+
+**Table bookmarks** — set from `nixos-browse-options-mode` /
+`nixos-browse-packages-mode` buffers (filtered lists).  Record
+fields: `type`, `name-list`, `name-prefix`.
+
+`nixos--bookmark-jump` dispatches by checking for `name-list`
+first (table), then falling through to the detail handler.
 
 ### Test conventions
 
+- The test file is byte-compiled in `checkPhase` with
+  `byte-compile-error-on-warn = t`, so all warnings are fatal.
+- Forward-declare optional functions with
+  `(declare-function nix-mode "nix-mode")` and optional vars
+  with `(defvar nix-instantiate-executable)` (no value needed —
+  the compiler just needs to know they exist).
 - `nixos-test--options-hash` / `nixos-test--packages-hash` build
   mock hash tables from plists.  Keyword keys (`:description`) are
   converted to strings by stripping the leading colon.

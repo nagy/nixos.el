@@ -28,6 +28,9 @@
 (require 'ert)
 (require 'cl-lib)
 
+(defvar nix-instantiate-executable)
+(declare-function nix-mode "nix-mode")
+
 
 ;;; Helpers
 
@@ -385,15 +388,13 @@ converted to strings by stripping the leading colon."
   (nixos-test--with-options
       (nixos-test--options-hash
        '("services.foo.enable" :description "Enable foo"))
-    (let ((buf-name nil))
-      (cl-letf (((symbol-function 'pop-to-buffer)
-                 (lambda (buf) (setq buf-name (buffer-name buf))
-                   (set-buffer buf))))
+    (cl-letf (((symbol-function 'pop-to-buffer)
+               (lambda (buf) (set-buffer buf))))
         (nixos-option "services.foo.enable")
         (should (eq major-mode 'nixos-browse-mode))
         (should (eq nixos--browse-type 'option))
         (should (equal nixos--browse-name "services.foo.enable"))
-        (kill-buffer)))))
+        (kill-buffer))))
 
 (ert-deftest nixos-browse-mode-package-buffer ()
   "Package display buffer stores correct browse metadata."
