@@ -32,7 +32,7 @@ rec {
           pkgs.xvfb-run
           pkgs.iosevka
           pkgs.nixVersions.latest
-          pkgs.htop  # so the store path exists on disk → blue dired-directory face
+          pkgs.htop # so the store path exists on disk → blue dired-directory face
         ];
         emacsCodeFile = pkgs.writeText "emacscode.el" emacsCode;
         screenshotScript = pkgs.writeText "script.el" ''
@@ -56,7 +56,8 @@ rec {
         mkdir -p "$NIX_STATE_DIR"
         HOME=$PWD \
           xvfb-run --server-args="-screen 0 1024x576x24" \
-            emacs --quick -f package-initialize --fullscreen \
+            emacs --quick --eval="(defalias (quote display-warning) (quote ignore))" \
+            -f package-initialize --fullscreen \
             -l modus-themes \
             --font Iosevka\ 11 \
             -l $screenshotScript \
@@ -78,6 +79,8 @@ rec {
                      '("\\*nixos-" display-buffer-same-window))
         (defun screenshot-poll ()
           "Poll until the target buffer is displayed, then capture."
+          (when (get-buffer "*Warnings*")
+            (kill-buffer "*Warnings*"))
           (if (and (get-buffer "*nixos-package htop*")
                    (get-buffer-window "*nixos-package htop*"))
               (progn
@@ -90,67 +93,64 @@ rec {
       '';
     };
 
-  imageShadow =
+  finalizePng =
     image:
-    pkgs.runCommandLocal image.name { inherit image; } ''
-      ${pkgs.imagemagick}/bin/magick "$image" \
-        -gravity Northwest \
-        -bordercolor black -border 1 \
-        -mosaic +repage \
-        \( +clone -background black -shadow "80x3+3+3" \) \
-        +swap \
-        -background none -mosaic +repage $out
-    '';
-
-  optimizePng =
-    image:
-    pkgs.runCommandLocal ("pq-" + image.name)
+    pkgs.runCommandLocal image.name
       {
         inherit image;
-        nativeBuildInputs = [ pkgs.pngquant ];
+        nativeBuildInputs = [
+          pkgs.imagemagick
+          pkgs.pngquant
+        ];
       }
       ''
-        pngquant --speed 1 --force --output $out "$image"
+        magick "$image" \
+          -gravity Northwest \
+          -bordercolor black -border 1 \
+          -mosaic +repage \
+          \( +clone -background black -shadow "80x3+3+3" \) \
+          +swap \
+          -background none -mosaic +repage tmp.png
+        pngquant --speed 1 --force --output $out tmp.png
       '';
 
-  svgDualThemeText = pkgs.writeText "myfile.svg" ''
-    <?xml version="1.0" encoding="utf-8"?>
-    <svg version="1.1" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px"
-         viewBox="0 0 1024 576" xml:space="preserve">
-      <defs>
-        <style type="text/css">
-            image.light { display: inherit; }
-            image.dark { display: none; }
-            @media ( prefers-color-scheme:dark ) {
-                image.light { display: none; }
-                image.dark { display: inherit; }
-            }
-        </style>
-      </defs>
-      <image class="light" height="576" width="1024" href="data:image/png;base64,@lightThemeB64@" ></image>
-      <image class="dark" height="576" width="1024" href="data:image/png;base64,@darkThemeB64@" ></image>
-    </svg>
-  '';
-
   svgDualTheme =
-    imgFunc:
-    pkgs.runCommandLocal "emacs-screenshot.svg" { } ''
-      lightThemeB64=$(base64 -w0 < ${imgFunc true})
-      darkThemeB64=$(base64 -w0 < ${imgFunc false})
-      substitute ${svgDualThemeText} $out \
-        --subst-var lightThemeB64 \
-        --subst-var darkThemeB64
-    '';
+    lightImg: darkImg:
+    pkgs.runCommandLocal "emacs-screenshot.svg"
+      {
+        inherit lightImg darkImg;
+        template = pkgs.writeText "template.svg" ''
+          <?xml version="1.0" encoding="utf-8"?>
+          <svg version="1.1" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px"
+               viewBox="0 0 1024 576" xml:space="preserve">
+            <defs>
+              <style type="text/css">
+                  image.light { display: inherit; }
+                  image.dark { display: none; }
+                  @media ( prefers-color-scheme:dark ) {
+                      image.light { display: none; }
+                      image.dark { display: inherit; }
+                  }
+              </style>
+            </defs>
+            <image class="light" height="576" width="1024" href="data:image/png;base64,@lightThemeB64@" ></image>
+            <image class="dark" height="576" width="1024" href="data:image/png;base64,@darkThemeB64@" ></image>
+          </svg>
+        '';
+      }
+      ''
+        lightThemeB64=$(base64 -w0 < $lightImg)
+        darkThemeB64=$(base64 -w0 < $darkImg)
+        substitute $template $out \
+          --subst-var lightThemeB64 \
+          --subst-var darkThemeB64
+      '';
 
-  imageShadowEmacs =
-    light:
-    imageShadow (emacsNixosScreenshot {
-      inherit light;
-    });
+  png = finalizePng (emacsNixosScreenshot {
+    light = true;
+  });
 
-  optimizeEmacsScreenshot = light: optimizePng (imageShadowEmacs light);
-
-  svgDualThemeEmacs = svgDualTheme optimizeEmacsScreenshot;
-
-  pngEmacs = imageShadowEmacs true;
+  svg = svgDualTheme
+    (finalizePng (emacsNixosScreenshot { light = true; }))
+    (finalizePng (emacsNixosScreenshot { light = false; }));
 }
