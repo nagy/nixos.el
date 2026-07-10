@@ -201,6 +201,49 @@ converted to strings by stripping the leading colon."
   (should-not nixos--packages-cache)
   (should-not nixos--packages-keys))
 
+(ert-deftest nixos-ensure-nixpkgs-root ()
+  "`nixos--ensure-nixpkgs-root' discovers the nixpkgs root from NIX_PATH."
+  (let ((nixos--nixpkgs-root nil))
+    (let ((nix-instantiate-executable "nix-instantiate"))
+      (cl-letf (((symbol-function 'call-process)
+                 (lambda (_program &optional _infile destination _display &rest _args)
+                   (when (eq destination t)
+                     (insert "[{\"path\":\"/nix/store/nixpkgs-source\",\"prefix\":\"nixpkgs\"}]"))
+                   0)))
+        (should (equal (nixos--ensure-nixpkgs-root)
+                       "/nix/store/nixpkgs-source"))
+        ;; Second call uses cache, doesn't invoke call-process.
+        (let ((called nil))
+          (cl-letf (((symbol-function 'call-process)
+                     (lambda (&rest _) (setq called t) 0)))
+            (nixos--ensure-nixpkgs-root)
+            (should-not called)))))))
+
+(ert-deftest nixos-display-option-sets-default-directory ()
+  "`nixos--display-option' sets `default-directory' to first declaration."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable"
+         :description "Enable foo"
+         :declarations ["nixos/modules/services/foo.nix"]))
+    ;; Create a fake nixpkgs tree and point the nixpkgs root at it.
+    (let* ((tmp-root (make-temp-file "nixos-test-nixpkgs-" t))
+           (expected-file (expand-file-name
+                           "nixos/modules/services/foo.nix" tmp-root)))
+      (unwind-protect
+          (progn
+            (make-directory (file-name-directory expected-file) t)
+            (write-region "" nil expected-file)
+            (let ((nixos--nixpkgs-root tmp-root))
+              (cl-letf (((symbol-function 'pop-to-buffer)
+                         (lambda (buf) (set-buffer buf))))
+                (nixos--display-option
+                 "services.foo.enable"
+                 (gethash "services.foo.enable" nixos--options-cache))
+                (should (equal tmp-root default-directory))
+                (kill-buffer))))
+        (delete-directory tmp-root t)))))
+
 (ert-deftest nixos-load-missing-file ()
   "Loading from a nonexistent file returns an empty hash table."
   (setq nixos--options-cache nil)

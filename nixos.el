@@ -171,6 +171,11 @@ Keys are package names, values are alists with keys `meta',
 Memoized because nix store paths are immutable — the metadata
 for a given package name never changes.")
 
+(defvar nixos--nixpkgs-root nil
+  "Cached nixpkgs source root, discovered from NIX_PATH on first use.
+Set by `nixos--ensure-nixpkgs-root' via nix-instantiate.
+Since store paths are immutable, this cache never expires.")
+
 (defun nixos--options-load ()
   "Load NixOS options from `nixos-options-json-file' into cache.
 Returns the cached hash table."
@@ -212,6 +217,30 @@ from the JSON files."
         nixos--packages-keys nil
         nixos--package-meta-cache nil)
   (message "nixos: cache cleared"))
+
+(defun nixos--ensure-nixpkgs-root ()
+  "Ensure `nixos--nixpkgs-root' is set from NIX_PATH.
+Calls nix-instantiate once to query `builtins.nixPath',
+then extracts the first `<nixpkgs>' entry.  Result is cached
+permanently since Nix store paths are immutable."
+  (unless nixos--nixpkgs-root
+    (when (and (boundp 'nix-instantiate-executable)
+               (stringp nix-instantiate-executable))
+      (with-temp-buffer
+        (when (zerop (call-process nix-instantiate-executable nil t nil
+                                   "--json" "--eval" "--expr"
+                                   "builtins.nixPath"))
+          (goto-char (point-min))
+          (let ((entries (json-parse-buffer)))
+            (when (vectorp entries)
+              (catch 'found
+                (dotimes (i (length entries))
+                  (let ((entry (aref entries i)))
+                    (when (and (hash-table-p entry)
+                               (equal (gethash "prefix" entry) "nixpkgs"))
+                      (setq nixos--nixpkgs-root (gethash "path" entry))
+                      (throw 'found t)))))))))))
+  nixos--nixpkgs-root)
 
 
 ;;; Helpers
@@ -441,6 +470,17 @@ convention."
               (field "Declared by:" nil)
               (dolist (d (if (vectorp decls) (append decls nil) decls))
                 (insert "  " d "\n")))))
+        ;; Point default-directory at the nixpkgs root so
+        ;; embark-dwim / find-file-at-point can resolve relative
+        ;; declaration paths like "nixos/modules/programs/htop.nix".
+        (when-let* ((decls (gethash "declarations" data))
+                    ((vectorp decls))
+                    ((> (length decls) 0))
+                    (first (aref decls 0))
+                    (root (nixos--ensure-nixpkgs-root))
+                    (full (expand-file-name first root))
+                    ((file-exists-p full)))
+          (setq default-directory root))
         (goto-char (point-min))
         (read-only-mode 1)
         (set-buffer-modified-p nil)))
@@ -1018,6 +1058,9 @@ to filter the view in-place." typestr typestr mode-map visit search-url refresh)
                (,mode)
                (setq-local nixos--browse-name-list name-list)
                (setq-local nixos--browse-name-prefix name-prefix)
+               (setq-local default-directory
+                           (or (nixos--ensure-nixpkgs-root)
+                               default-directory))
                (setq tabulated-list-entries
                      (,entries-fn name-list))
                (tabulated-list-print))
