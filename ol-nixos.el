@@ -32,7 +32,18 @@
 ;;; Code:
 
 (require 'ol)
-(require 'nixos)
+
+(declare-function nixos-package "nixos")
+(declare-function nixos-package-local "nixos")
+(declare-function nixos-package-url "nixos")
+(declare-function nixos-option "nixos")
+(declare-function nixos--packages-load "nixos")
+(declare-function nixos--options-load "nixos")
+(declare-function nixos-browse-packages "nixos")
+(declare-function nixos-browse-options "nixos")
+(defvar nixos--packages-keys)
+(defvar nixos-package-search-url-template)
+(defvar nixos-option-search-url-template)
 
 
 ;;; nixos-package: link
