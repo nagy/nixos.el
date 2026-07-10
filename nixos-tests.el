@@ -1002,5 +1002,91 @@ converted to strings by stripping the leading colon."
     (should (equal result "htop"))))
 
 
+;;; Org package-search link tests
+
+(ert-deftest nixos-org-package-search-open-filters ()
+  "`nixos-org-package-search-open' filters packages by substring."
+  (nixos-test--with-packages
+      (nixos-test--packages-hash
+       '("legacyPackages.x86_64-linux.htop"
+         :pname "htop" :version "3.0" :description "viewer")
+       '("legacyPackages.x86_64-linux.neovim"
+         :pname "neovim" :version "0.10" :description "editor")
+       '("legacyPackages.x86_64-linux.python3Packages.neovim"
+         :pname "python-neovim" :version "0.5" :description "client"))
+    (let ((called nil))
+      (cl-letf (((symbol-function 'nixos-browse-packages)
+                 (lambda (names) (setq called names))))
+        (nixos-org-package-search-open "neovim")
+        (should (= (length called) 2))
+        (should (member "neovim" called))
+        (should (member "python3Packages.neovim" called))
+        (should-not (member "htop" called))))))
+
+(ert-deftest nixos-org-package-search-open-no-match ()
+  "`nixos-org-package-search-open' returns empty list when nothing matches."
+  (nixos-test--with-packages
+      (nixos-test--packages-hash
+       '("legacyPackages.x86_64-linux.htop"
+         :pname "htop" :version "3.0" :description "viewer"))
+    (let ((called :sentinel))
+      (cl-letf (((symbol-function 'nixos-browse-packages)
+                 (lambda (names) (setq called names))))
+        (nixos-org-package-search-open "zzznotfound")
+        (should (and (listp called) (null called)))))))
+
+(ert-deftest nixos-org-package-search-export-html ()
+  "`nixos-org-package-search-export' produces an HTML link."
+  (let ((result (nixos-org-package-search-export "htop" "htop search" 'html nil)))
+    (should (string-match-p "search.nixos.org/packages" result))
+    (should (string-match-p "htop" result))))
+
+(ert-deftest nixos-org-package-search-export-plain ()
+  "`nixos-org-package-search-export' falls back to plain text."
+  (let ((result (nixos-org-package-search-export "htop" nil 'ascii nil)))
+    (should (equal result "htop"))))
+
+
+;;; Org option-search link tests
+
+(ert-deftest nixos-org-option-search-open-filters ()
+  "`nixos-org-option-search-open' filters options by substring."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.htop.enable" :type "boolean" :description "Htop")
+       '("programs.htop.enable" :type "boolean" :description "Htop")
+       '("services.foo.enable" :type "boolean" :description "Foo"))
+    (let ((called nil))
+      (cl-letf (((symbol-function 'nixos-browse-options)
+                 (lambda (names) (setq called names))))
+        (nixos-org-option-search-open "htop")
+        (should (= (length called) 2))
+        (should (member "services.htop.enable" called))
+        (should (member "programs.htop.enable" called))
+        (should-not (member "services.foo.enable" called))))))
+
+(ert-deftest nixos-org-option-search-open-no-match ()
+  "`nixos-org-option-search-open' returns empty list when nothing matches."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.htop.enable" :type "boolean" :description "Htop"))
+    (let ((called :sentinel))
+      (cl-letf (((symbol-function 'nixos-browse-options)
+                 (lambda (names) (setq called names))))
+        (nixos-org-option-search-open "zzznotfound")
+        (should (and (listp called) (null called)))))))
+
+(ert-deftest nixos-org-option-search-export-html ()
+  "`nixos-org-option-search-export' produces an HTML link."
+  (let ((result (nixos-org-option-search-export "htop" "htop search" 'html nil)))
+    (should (string-match-p "search.nixos.org/options" result))
+    (should (string-match-p "htop" result))))
+
+(ert-deftest nixos-org-option-search-export-plain ()
+  "`nixos-org-option-search-export' falls back to plain text."
+  (let ((result (nixos-org-option-search-export "htop" nil 'ascii nil)))
+    (should (equal result "htop"))))
+
+
 (provide 'nixos-tests)
 ;;; nixos-tests.el ends here
