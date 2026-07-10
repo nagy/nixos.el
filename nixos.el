@@ -678,6 +678,26 @@ metadata for a given package is stable forever."
 
 ;;; Bookmarks
 
+(defvar nixos--browse-name-list)
+(defvar nixos--browse-name-prefix)
+
+(defun nixos--browse-table-bookmark-make-record ()
+  "Create a bookmark record for the current browse-table buffer.
+Intended for use as `bookmark-make-record-function' in
+`nixos-browse-options-mode' and `nixos-browse-packages-mode'."
+  (let ((type (if (derived-mode-p 'nixos-browse-options-mode)
+                  'option
+                'package))
+        (name-list nixos--browse-name-list)
+        (name-prefix nixos--browse-name-prefix))
+    `(,(format "NixOS %s: %s"
+               (if (eq type 'option) "option search" "package search")
+               (or name-prefix (format "%d items" (length name-list))))
+      (type . ,type)
+      (name-list . ,name-list)
+      (name-prefix . ,name-prefix)
+      (handler . nixos--bookmark-jump))))
+
 (defun nixos--bookmark-make-record ()
   "Create a bookmark record for the current browse buffer.
 Intended for use as `bookmark-make-record-function'."
@@ -700,19 +720,29 @@ Intended for use as `bookmark-make-record-function'."
 Called by the bookmark system."
   (let ((type (alist-get 'type bookmark))
         (name (alist-get 'name bookmark))
+        (name-list (alist-get 'name-list bookmark))
         (local (alist-get 'local bookmark))
         (local-dir (alist-get 'local-dir bookmark))
         (browse-url (alist-get 'browse-url bookmark))
         (browse-url-str (alist-get 'browse-url-str bookmark)))
-    (cl-case type
-      (option (nixos-option name))
-      (package (cond (browse-url
-                      (nixos-package-url browse-url-str))
-                     (local
-                      (let ((default-directory local-dir))
-                        (nixos-package-local)))
-                     (t (nixos-package name))))
-      (t (user-error "Unknown bookmark type %s" type)))))
+    (if name-list
+        ;; Table (search) bookmark.
+        (cl-case type
+          (option (nixos-browse-options name-list
+                     (alist-get 'name-prefix bookmark)))
+          (package (nixos-browse-packages name-list
+                     (alist-get 'name-prefix bookmark)))
+          (t (user-error "Unknown bookmark type %s" type)))
+      ;; Detail bookmark.
+      (cl-case type
+        (option (nixos-option name))
+        (package (cond (browse-url
+                        (nixos-package-url browse-url-str))
+                       (local
+                        (let ((default-directory local-dir))
+                          (nixos-package-local)))
+                       (t (nixos-package name))))
+        (t (user-error "Unknown bookmark type %s" type))))))
 
 
 ;;; Interactive commands
@@ -862,6 +892,20 @@ Add this to `nix-mode-hook' for automatic setup:
                     thing-at-point-provider-alist)))
 
 
+(defvar nixos--browse-name-list nil
+  "Buffer-local list of item names that the browse buffer is filtered to.
+When nil, all items are shown.  Set by browse-table commands
+and used by refresh to preserve the filter.")
+(make-variable-buffer-local 'nixos--browse-name-list)
+
+(defvar nixos--browse-name-prefix nil
+  "Buffer-local search term used for naming the browse buffer.
+When non-nil, the buffer name includes this term (e.g.
+\"*Nix Packages: htop*\").  Used by bookmarks to recreate
+the buffer with the original name.")
+(make-variable-buffer-local 'nixos--browse-name-prefix)
+
+
 ;;; Tabulated Browse Mode (shared macro)
 
 (cl-defmacro nixos--define-browse-mode (type &key mode-label buffer-name
@@ -899,7 +943,9 @@ Internal use only."
          (setq tabulated-list-padding 2)
          (setq tabulated-list-sort-key ',sort-key)
          (tabulated-list-init-header)
-         (hl-line-mode 1))
+         (hl-line-mode 1)
+         (setq-local bookmark-make-record-function
+                     #'nixos--browse-table-bookmark-make-record))
 
        (defun ,entry-fn (name data)
          ,(format "Return a `tabulated-list' entry for %s NAME with DATA." typestr)
@@ -939,11 +985,12 @@ appear in the list." typestr)
        (defun ,refresh ()
          ,(format "Refresh the %s table." typestr)
          (interactive)
-         (setq tabulated-list-entries (,entries-fn))
+         (setq tabulated-list-entries
+               (,entries-fn nixos--browse-name-list))
          (tabulated-list-print t))
 
        ;;;###autoload
-       (defun ,cmd (&optional name-list)
+       (defun ,cmd (&optional name-list name-prefix)
          ,(format "Display Nix %s in a browseable table.
 
 %s are shown with sortable columns.
@@ -955,16 +1002,26 @@ appear in the list." typestr)
 When NAME-LIST is non-nil (a list of names), only those entries
 are displayed.  This is used by Embark export.
 
+When NAME-PREFIX is non-nil, it is appended to the buffer name
+(e.g. \"*NixOS Options: htop*\"), allowing multiple searches
+to coexist in separate buffers.
+
 Emacs' built-in narrowing (\\[narrow-to-defun] etc.) can be used
 to filter the view in-place." typestr typestr mode-map visit search-url refresh)
          (interactive)
-         (let ((buf (get-buffer-create ,buffer-name)))
-           (with-current-buffer buf
-             (,mode)
-             (setq tabulated-list-entries
-                   (,entries-fn name-list))
-             (tabulated-list-print))
-           (switch-to-buffer buf))))))
+         (let ((buf-name (if name-prefix
+                             (concat (substring ,buffer-name 0 -1)
+                                     ": " name-prefix "*")
+                           ,buffer-name)))
+           (let ((buf (get-buffer-create buf-name)))
+             (with-current-buffer buf
+               (,mode)
+               (setq-local nixos--browse-name-list name-list)
+               (setq-local nixos--browse-name-prefix name-prefix)
+               (setq tabulated-list-entries
+                     (,entries-fn name-list))
+               (tabulated-list-print))
+             (switch-to-buffer buf)))))))
 
 ;; Options table
 

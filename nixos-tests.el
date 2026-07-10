@@ -729,7 +729,7 @@ converted to strings by stripping the leading colon."
   "Embark option export calls `nixos-browse-options' with candidates."
   (let ((called nil))
     (cl-letf (((symbol-function 'nixos-browse-options)
-               (lambda (names) (setq called names))))
+               (lambda (names &optional _prefix) (setq called names))))
       (nixos--embark-export-option '("a" "b"))
       (should (equal called '("a" "b"))))))
 
@@ -737,7 +737,7 @@ converted to strings by stripping the leading colon."
   "Embark package export calls `nixos-browse-packages' with candidates."
   (let ((called nil))
     (cl-letf (((symbol-function 'nixos-browse-packages)
-               (lambda (names) (setq called names))))
+               (lambda (names &optional _prefix) (setq called names))))
       (nixos--embark-export-package '("htop" "neovim"))
       (should (equal called '("htop" "neovim"))))))
 
@@ -1014,14 +1014,16 @@ converted to strings by stripping the leading colon."
          :pname "neovim" :version "0.10" :description "editor")
        '("legacyPackages.x86_64-linux.python3Packages.neovim"
          :pname "python-neovim" :version "0.5" :description "client"))
-    (let ((called nil))
+    (let ((called nil) (called-prefix nil))
       (cl-letf (((symbol-function 'nixos-browse-packages)
-                 (lambda (names) (setq called names))))
+                 (lambda (names &optional prefix)
+                   (setq called names called-prefix prefix))))
         (nixos-org-package-search-open "neovim")
         (should (= (length called) 2))
         (should (member "neovim" called))
         (should (member "python3Packages.neovim" called))
-        (should-not (member "htop" called))))))
+        (should-not (member "htop" called))
+        (should (equal called-prefix "neovim"))))))
 
 (ert-deftest nixos-org-package-search-open-no-match ()
   "`nixos-org-package-search-open' returns empty list when nothing matches."
@@ -1029,11 +1031,13 @@ converted to strings by stripping the leading colon."
       (nixos-test--packages-hash
        '("legacyPackages.x86_64-linux.htop"
          :pname "htop" :version "3.0" :description "viewer"))
-    (let ((called :sentinel))
+    (let ((called :sentinel) (called-prefix :sentinel))
       (cl-letf (((symbol-function 'nixos-browse-packages)
-                 (lambda (names) (setq called names))))
+                 (lambda (names &optional prefix)
+                   (setq called names called-prefix prefix))))
         (nixos-org-package-search-open "zzznotfound")
-        (should (and (listp called) (null called)))))))
+        (should (and (listp called) (null called)))
+        (should (equal called-prefix "zzznotfound"))))))
 
 (ert-deftest nixos-org-package-search-export-html ()
   "`nixos-org-package-search-export' produces an HTML link."
@@ -1056,25 +1060,29 @@ converted to strings by stripping the leading colon."
        '("services.htop.enable" :type "boolean" :description "Htop")
        '("programs.htop.enable" :type "boolean" :description "Htop")
        '("services.foo.enable" :type "boolean" :description "Foo"))
-    (let ((called nil))
+    (let ((called nil) (called-prefix nil))
       (cl-letf (((symbol-function 'nixos-browse-options)
-                 (lambda (names) (setq called names))))
+                 (lambda (names &optional prefix)
+                   (setq called names called-prefix prefix))))
         (nixos-org-option-search-open "htop")
         (should (= (length called) 2))
         (should (member "services.htop.enable" called))
         (should (member "programs.htop.enable" called))
-        (should-not (member "services.foo.enable" called))))))
+        (should-not (member "services.foo.enable" called))
+        (should (equal called-prefix "htop"))))))
 
 (ert-deftest nixos-org-option-search-open-no-match ()
   "`nixos-org-option-search-open' returns empty list when nothing matches."
   (nixos-test--with-options
       (nixos-test--options-hash
        '("services.htop.enable" :type "boolean" :description "Htop"))
-    (let ((called :sentinel))
+    (let ((called :sentinel) (called-prefix :sentinel))
       (cl-letf (((symbol-function 'nixos-browse-options)
-                 (lambda (names) (setq called names))))
+                 (lambda (names &optional prefix)
+                   (setq called names called-prefix prefix))))
         (nixos-org-option-search-open "zzznotfound")
-        (should (and (listp called) (null called)))))))
+        (should (and (listp called) (null called)))
+        (should (equal called-prefix "zzznotfound"))))))
 
 (ert-deftest nixos-org-option-search-export-html ()
   "`nixos-org-option-search-export' produces an HTML link."
@@ -1086,6 +1094,74 @@ converted to strings by stripping the leading colon."
   "`nixos-org-option-search-export' falls back to plain text."
   (let ((result (nixos-org-option-search-export "htop" nil 'ascii nil)))
     (should (equal result "htop"))))
+
+
+
+;;; Table bookmark tests
+
+(ert-deftest nixos-browse-table-bookmark-make-record-options ()
+  "Table bookmark record for options with search term."
+  (with-temp-buffer
+    (nixos-browse-options-mode)
+    (setq-local nixos--browse-name-list (list "services.htop.enable"
+                                               "programs.htop.enable"))
+    (setq-local nixos--browse-name-prefix "htop")
+    (let ((rec (nixos--browse-table-bookmark-make-record)))
+      (should (stringp (car rec)))
+      (should (string-match-p "htop" (car rec)))
+      (should (eq (alist-get 'type rec) 'option))
+      (should (equal (alist-get 'name-list rec)
+                     '("services.htop.enable" "programs.htop.enable")))
+      (should (equal (alist-get 'name-prefix rec) "htop"))
+      (should (eq (alist-get 'handler rec) 'nixos--bookmark-jump)))))
+
+(ert-deftest nixos-browse-table-bookmark-make-record-packages ()
+  "Table bookmark record for packages without search term."
+  (with-temp-buffer
+    (nixos-browse-packages-mode)
+    (setq-local nixos--browse-name-list (list "htop" "neovim"))
+    (setq-local nixos--browse-name-prefix nil)
+    (let ((rec (nixos--browse-table-bookmark-make-record)))
+      (should (string-match-p "2 items" (car rec)))
+      (should (eq (alist-get 'type rec) 'package))
+      (should (equal (alist-get 'name-list rec) '("htop" "neovim")))
+      (should-not (alist-get 'name-prefix rec))
+      (should (eq (alist-get 'handler rec) 'nixos--bookmark-jump)))))
+
+(ert-deftest nixos-bookmark-jump-table-option ()
+  "`nixos--bookmark-jump' calls `nixos-browse-options' for table bookmarks."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable" :type "boolean" :description "foo"))
+    (let ((called-names nil) (called-prefix :sentinel))
+      (cl-letf (((symbol-function 'switch-to-buffer)
+                 (lambda (buf) (set-buffer buf)))
+                ((symbol-function 'nixos-browse-options)
+                 (lambda (names &optional prefix)
+                   (setq called-names names called-prefix prefix))))
+        (nixos--bookmark-jump '((type . option)
+                                (name-list . ("services.foo.enable"))
+                                (name-prefix . "foo")))
+        (should (equal called-names '("services.foo.enable")))
+        (should (equal called-prefix "foo"))))))
+
+(ert-deftest nixos-bookmark-jump-table-package ()
+  "`nixos--bookmark-jump' calls `nixos-browse-packages' for table bookmarks."
+  (nixos-test--with-packages
+      (nixos-test--packages-hash
+       '("legacyPackages.x86_64-linux.htop"
+         :pname "htop" :version "3.0" :description "viewer"))
+    (let ((called-names nil) (called-prefix :sentinel))
+      (cl-letf (((symbol-function 'switch-to-buffer)
+                 (lambda (buf) (set-buffer buf)))
+                ((symbol-function 'nixos-browse-packages)
+                 (lambda (names &optional prefix)
+                   (setq called-names names called-prefix prefix))))
+        (nixos--bookmark-jump '((type . package)
+                                (name-list . ("htop"))
+                                (name-prefix . nil)))
+        (should (equal called-names '("htop")))
+        (should-not called-prefix)))))
 
 
 (provide 'nixos-tests)

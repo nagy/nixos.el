@@ -98,7 +98,7 @@ whose names contain PATH as a substring."
                    (lambda (name)
                      (string-match-p (regexp-quote path) name))
                    nixos--packages-keys)))
-    (nixos-browse-packages matching)))
+    (nixos-browse-packages matching path)))
 
 (defun nixos-org-package-search-export (path description backend _info)
   "Export a `nixos-package-search:' link to search.nixos.org."
@@ -124,7 +124,7 @@ whose names contain PATH as a substring."
                    (lambda (name)
                      (string-match-p (regexp-quote path) name))
                    (hash-table-keys (nixos--options-load)))))
-    (nixos-browse-options matching)))
+    (nixos-browse-options matching path)))
 
 (defun nixos-org-option-search-export (path description backend _info)
   "Export a `nixos-option-search:' link to search.nixos.org."
