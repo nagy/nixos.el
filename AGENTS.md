@@ -2,10 +2,11 @@
 
 ## Overview
 
-Single-package Emacs project (`nixos.el`) providing interactive
-`completing-read` and `tabulated-list-mode` interfaces for browsing
-NixOS options and Nix packages.  Built via `default.nix` (melpaBuild,
-AGPL3+).
+Emacs package providing interactive `completing-read` and
+`tabulated-list-mode` interfaces for browsing NixOS options and
+Nix packages.  Two source files: `nixos.el` (core) and `ol-nixos.el`
+(Org link types).  Built via `default.nix` (melpaBuild, AGPL3+).
+Tests in `nixos-tests.el`.
 
 ## Build & test
 
@@ -19,20 +20,33 @@ fails the build.
 
 ## Architecture
 
-Single file (`nixos.el`), sections roughly:
+### nixos.el (core, ~1200 lines)
 
-1. defgroup / defcustom
-2. Cache (hash-table vars, load functions, `nixos-refresh-cache`)
-3. Helpers (`nixos--slurp-description`, `nixos--package-expr-tail`,
+1. Faces (`nixos-package-name`, `nixos-field-label`, `nixos-description`)
+2. defgroup / defcustom (6 options incl. URL templates for search.nixos.org)
+3. Cache (hash-table vars, load functions, `nixos--ensure-nixpkgs-root`,
+   `nixos-refresh-cache`)
+4. Helpers (`nixos--slurp-description`, `nixos--package-expr-tail`,
    `nixos--parse-package-result`, `nixos--call-nix-package-expr`,
    `nixos--call-nix-url-expr`)
-4. Options / Packages collection + annotation
-5. Browse modes (`nixos-browse-mode`, `nixos--define-browse-mode`
-   macro for browse-options/packages)
-6. `nixos-package` / `nixos-package-local` / `nixos-package-url`
-   interactive commands
-7. Bookmarks (detail + table), thingatpt, eldoc
-8. Marginalia annotators, Embark export + actions
+5. Options / Packages collection + annotation
+6. Browse Major Mode (`nixos-browse-mode`)
+7. Display helpers (`nixos--display-option`, `nixos--display-package`)
+8. Bookmarks (detail + table)
+9. Interactive commands (`nixos-package` / `nixos-package-local` /
+   `nixos-package-url`, `nixos-option`)
+10. Thing-At-Point, Tabulated Browse Mode (shared macro), Eldoc
+11. Marginalia annotators, Package Browse Mode, Embark export + actions
+
+### ol-nixos.el (Org link types, ~155 lines)
+
+Provides four Org link types:
+- `nixos-package:` / `nixos-package-local:` (path) / URL variant
+- `nixos-option:`
+- `nixos-package-search:` / `nixos-option-search:` (filtered browse)
+
+Loaded via `with-eval-after-load 'org` in nixos.el to avoid recursive
+load.
 
 ## Conventions
 
@@ -48,6 +62,29 @@ variable, so `symbol-value` still errors.
 (defvar embark-general-map nil)             ;; correct
 (defvar foo)                                ;; wrong — still void
 ```
+
+### ol-nixos.el: declare-function, not require
+
+`ol-nixos.el` cannot `(require 'nixos)` at top-level because
+`nixos.el` loads `ol-nixos.el` via `with-eval-after-load 'org`.
+A top-level `require` causes recursive load if Org triggers while
+`nixos.el` is still being parsed.  Use `declare-function` stubs
+and `defvar` declarations instead:
+
+```elisp
+;; Wrong — recursive load
+(require 'ol)
+(require 'nixos)
+
+;; Correct
+(require 'ol)
+(declare-function nixos-package "nixos")
+(defvar nixos--packages-keys)
+```
+
+Since `ol-nixos.el` is only ever loaded after `nixos.el` (via the
+`with-eval-after-load` hook), all functions and vars declared this
+way are guaranteed to be defined at load time.
 
 ### Build-time data baking
 
@@ -67,6 +104,13 @@ to skip the eval.
 Nix store paths are immutable, so results never go stale.  Nil results
 are intentionally NOT cached — transient failures retry.
 
+`nixos--ensure-nixpkgs-root` uses the same permanent-cache pattern:
+the nixpkgs source root is discovered once from `builtins.nixPath`
+via `nix-instantiate` and cached forever (store path never changes).
+This lets option detail buffers and browse-table modes set
+`default-directory` to the nixpkgs source tree, so `dired-jump`,
+`find-file-at-point`, and Embark actions resolve relative
+declaration paths correctly.
 ```elisp
 (with-memoization (gethash key cache)
   expensive-computation...)
@@ -274,6 +318,7 @@ should be pure where possible — makes them testable without mocking.
 |-----------|-----------|-----|
 | Emacs 30.1 | yes | `json-parse-buffer`, `defvar-keymap`, `with-memoization` |
 | nix-mode | soft | `nix-instantiate-executable` for package metadata |
+| org-mode | soft | `ol-nixos.el` Org link types (loaded via `with-eval-after-load`) |
 | marginalia | soft | annotator registry |
 | embark | soft | export + actions |
 
