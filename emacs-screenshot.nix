@@ -151,7 +151,17 @@ rec {
     light = true;
   });
 
-  svg = svgDualTheme
-    (finalizePng (emacsNixosScreenshot { light = true; }))
-    (finalizePng (emacsNixosScreenshot { light = false; }));
+  svg =
+    svgDualTheme
+      (finalizePng (emacsNixosScreenshot {
+        light = true;
+      }))
+      (
+        finalizePng (emacsNixosScreenshot {
+          light = false;
+        })
+      );
+
+  gitrepo = pkgs.nur.repos.nagy.lib.mkGitRepository svg;
+
 }
