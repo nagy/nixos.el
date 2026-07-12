@@ -1,6 +1,6 @@
 ;;; nixos-tests.el --- Tests for nixos -*- lexical-binding: t -*-
 
-;; Copyright (C) 2025-2026  Daniel Nagy
+;; Copyright (C) 2026  Daniel Nagy
 
 ;; This file is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU Affero General Public License as

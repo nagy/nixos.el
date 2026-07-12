@@ -1,6 +1,6 @@
 ;;; nixos.el --- Browse NixOS options and packages -*- lexical-binding: t -*-
 
-;; Copyright (C) 2025-2026  Daniel Nagy
+;; Copyright (C) 2026  Daniel Nagy
 
 ;; This file is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU Affero General Public License as
@@ -73,7 +73,8 @@
 (defgroup nixos nil
   "Browse NixOS options and packages."
   :group 'tools
-  :prefix "nixos-")
+  :prefix "nixos-"
+  :link '(url-link :tag "Repository" "https://github.com/nagy/nixos.el"))
 
 (defcustom nixos-options-json-file "/etc/nixos-options.json"
   "Path to the NixOS options JSON file.
