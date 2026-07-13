@@ -504,7 +504,8 @@ package."
         (nixos-browse-mode)
         (nixos--browse-setup 'package name out-path)
         ;; Title
-        (insert (propertize name 'face 'nixos-package-name) "\n\n")
+        (insert (propertize (format "%-14s" "Name:") 'face 'nixos-field-label)
+                (propertize name 'face 'nixos-package-name) "\n")
         (cl-labels ((field (label value)
                       (insert (propertize (format "%-14s" label) 'face 'nixos-field-label))
                       (when (and value (not (string-empty-p value)))

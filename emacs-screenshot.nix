@@ -60,7 +60,7 @@ rec {
             emacs --quick --eval="(defalias (quote display-warning) (quote ignore))" \
             -f package-initialize --fullscreen \
             -l modus-themes \
-            --font Iosevka\ 21 \
+            --font Iosevka\ 22 \
             -l $screenshotScript \
             -l $emacsCodeFile
       '';
