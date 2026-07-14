@@ -221,10 +221,13 @@ Two kinds of bookmarks are supported:
 
 **Table bookmarks** — set from `nixos-browse-options-mode` /
 `nixos-browse-packages-mode` buffers (filtered lists).  Record
-fields: `type`, `name-list`, `name-prefix`.
+fields: `type`, `name-prefix`.  On reopen, the filtered
+`name-list` is re-derived from the live cache via
+`nixos--filter-by-prefix`, so new matching options/packages
+appear automatically.  A nil `name-prefix` means "show all".
 
-`nixos--bookmark-jump` dispatches by checking for `name-list`
-first (table), then falling through to the detail handler.
+`nixos--bookmark-jump` dispatches by checking for `name-prefix`
+via `assq` (table), then falling through to the detail handler.
 
 ### Test conventions
 

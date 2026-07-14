@@ -1147,15 +1147,12 @@ converted to strings by stripping the leading colon."
   "Table bookmark record for options with search term."
   (with-temp-buffer
     (nixos-browse-options-mode)
-    (setq-local nixos--browse-name-list (list "services.htop.enable"
-                                               "programs.htop.enable"))
     (setq-local nixos--browse-name-prefix "htop")
     (let ((rec (nixos--browse-table-bookmark-make-record)))
       (should (stringp (car rec)))
       (should (string-match-p "htop" (car rec)))
       (should (eq (alist-get 'type rec) 'option))
-      (should (equal (alist-get 'name-list rec)
-                     '("services.htop.enable" "programs.htop.enable")))
+      (should-not (alist-get 'name-list rec))
       (should (equal (alist-get 'name-prefix rec) "htop"))
       (should (eq (alist-get 'handler rec) 'nixos--bookmark-jump)))))
 
@@ -1163,12 +1160,11 @@ converted to strings by stripping the leading colon."
   "Table bookmark record for packages without search term."
   (with-temp-buffer
     (nixos-browse-packages-mode)
-    (setq-local nixos--browse-name-list (list "htop" "neovim"))
     (setq-local nixos--browse-name-prefix nil)
     (let ((rec (nixos--browse-table-bookmark-make-record)))
-      (should (string-match-p "2 items" (car rec)))
+      (should (string-match-p "all" (car rec)))
       (should (eq (alist-get 'type rec) 'package))
-      (should (equal (alist-get 'name-list rec) '("htop" "neovim")))
+      (should-not (alist-get 'name-list rec))
       (should-not (alist-get 'name-prefix rec))
       (should (eq (alist-get 'handler rec) 'nixos--bookmark-jump)))))
 
@@ -1184,7 +1180,6 @@ converted to strings by stripping the leading colon."
                  (lambda (names &optional prefix)
                    (setq called-names names called-prefix prefix))))
         (nixos--bookmark-jump '((type . option)
-                                (name-list . ("services.foo.enable"))
                                 (name-prefix . "foo")))
         (should (equal called-names '("services.foo.enable")))
         (should (equal called-prefix "foo"))))))
@@ -1202,9 +1197,8 @@ converted to strings by stripping the leading colon."
                  (lambda (names &optional prefix)
                    (setq called-names names called-prefix prefix))))
         (nixos--bookmark-jump '((type . package)
-                                (name-list . ("htop"))
                                 (name-prefix . nil)))
-        (should (equal called-names '("htop")))
+        (should-not called-names)
         (should-not called-prefix)))))
 
 

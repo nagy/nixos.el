@@ -730,13 +730,11 @@ Intended for use as `bookmark-make-record-function' in
   (let ((type (if (derived-mode-p 'nixos-browse-options-mode)
                   'option
                 'package))
-        (name-list nixos--browse-name-list)
         (name-prefix nixos--browse-name-prefix))
     `(,(format "NixOS %s: %s"
                (if (eq type 'option) "option search" "package search")
-               (or name-prefix (format "%d items" (length name-list))))
+               (or name-prefix "all"))
       (type . ,type)
-      (name-list . ,name-list)
       (name-prefix . ,name-prefix)
       (handler . nixos--bookmark-jump))))
 
@@ -756,25 +754,49 @@ Intended for use as `bookmark-make-record-function'."
     (browse-url . ,nixos--browse-url)
     (browse-url-str . ,nixos--browse-url-str)))
 
+(defun nixos--filter-by-prefix (cache key-fn name-prefix)
+  "Return a list of names from CACHE matching NAME-PREFIX.
+KEY-FN is applied to each hash key to extract the display name
+(nil for options, `string-remove-prefix' for packages)."
+  (let ((names nil))
+    (maphash
+     (lambda (raw-key _data)
+       (let ((name (if key-fn (funcall key-fn raw-key) raw-key)))
+         (when (string-match-p (regexp-quote name-prefix) name)
+           (push name names))))
+     cache)
+    (nreverse names)))
+
 ;;;###autoload
 (defun nixos--bookmark-jump (bookmark)
   "Restore a nixos BOOKMARK.
 Called by the bookmark system."
   (let ((type (alist-get 'type bookmark))
         (name (alist-get 'name bookmark))
-        (name-list (alist-get 'name-list bookmark))
+        (name-prefix (alist-get 'name-prefix bookmark))
         (local (alist-get 'local bookmark))
         (local-dir (alist-get 'local-dir bookmark))
         (browse-url (alist-get 'browse-url bookmark))
         (browse-url-str (alist-get 'browse-url-str bookmark)))
-    (if name-list
-        ;; Table (search) bookmark.
-        (cl-case type
-          (option (nixos-browse-options name-list
-                     (alist-get 'name-prefix bookmark)))
-          (package (nixos-browse-packages name-list
-                     (alist-get 'name-prefix bookmark)))
-          (t (user-error "Unknown bookmark type %s" type)))
+    (if (assq 'name-prefix bookmark)
+        ;; Table (search) bookmark — re-derive filtered name-list
+        ;; from current cache, so new results appear on reopen.
+        (let ((name-list
+               (when name-prefix
+                 (cl-case type
+                   (option
+                    (nixos--filter-by-prefix (nixos--options-load)
+                                             nil name-prefix))
+                   (package
+                    (nixos--filter-by-prefix (nixos--packages-load)
+                     (lambda (k)
+                       (string-remove-prefix "legacyPackages.x86_64-linux." k))
+                     name-prefix))
+                   (t (user-error "Unknown bookmark type %s" type))))))
+          (cl-case type
+            (option (nixos-browse-options name-list name-prefix))
+            (package (nixos-browse-packages name-list name-prefix))
+            (t (user-error "Unknown bookmark type %s" type))))
       ;; Detail bookmark.
       (cl-case type
         (option (nixos-option name))
@@ -934,18 +956,18 @@ Add this to `nix-mode-hook' for automatic setup:
                     thing-at-point-provider-alist)))
 
 
-(defvar nixos--browse-name-list nil
+(defvar-local nixos--browse-name-list nil
   "Buffer-local list of item names that the browse buffer is filtered to.
 When nil, all items are shown.  Set by browse-table commands
 and used by refresh to preserve the filter.")
-(make-variable-buffer-local 'nixos--browse-name-list)
+(put 'nixos--browse-name-list 'permanent-local t)
 
-(defvar nixos--browse-name-prefix nil
+(defvar-local nixos--browse-name-prefix nil
   "Buffer-local search term used for naming the browse buffer.
 When non-nil, the buffer name includes this term (e.g.
 \"*Nix Packages: htop*\").  Used by bookmarks to recreate
 the buffer with the original name.")
-(make-variable-buffer-local 'nixos--browse-name-prefix)
+(put 'nixos--browse-name-prefix 'permanent-local t)
 
 
 ;;; Tabulated Browse Mode (shared macro)
