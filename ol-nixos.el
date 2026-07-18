@@ -27,23 +27,29 @@
 ;;   [[nixos-package-search:htop]]
 ;;   [[nixos-option-search:programs.htop]]
 ;;
-;; Loaded automatically via `with-eval-after-load' in nixos.el.
+;; Opt-in, like Org's own ol-* modules.  To enable, add to your init:
+;;
+;;   (with-eval-after-load 'org
+;;     (require 'ol-nixos))
 
 ;;; Code:
 
 (require 'ol)
+(require 'nixos)
 
-(declare-function nixos-package "nixos")
-(declare-function nixos-package-local "nixos")
-(declare-function nixos-package-url "nixos")
-(declare-function nixos-option "nixos")
-(declare-function nixos--packages-load "nixos")
-(declare-function nixos--options-load "nixos")
-(declare-function nixos-browse-packages "nixos")
-(declare-function nixos-browse-options "nixos")
-(defvar nixos--packages-keys)
-(defvar nixos-package-search-url-template)
-(defvar nixos-option-search-url-template)
+
+;;; Shared export helper
+
+(defun nixos-org--export (url-template path description backend)
+  "Export an Org link for PATH to search.nixos.org.
+URL-TEMPLATE is a format string with one %s for the query,
+DESCRIPTION is the link text, BACKEND is the export backend."
+  (let ((url (format url-template (url-hexify-string path)))
+        (desc (or description path)))
+    (pcase backend
+      ('html (format "<a href=\"%s\">%s</a>" url desc))
+      ('latex (format "\\href{%s}{%s}" url desc))
+      (_ desc))))
 
 
 ;;; nixos-package: link
@@ -66,12 +72,8 @@ Otherwise call `nixos-package'."
   "Export a `nixos-package:' link to search.nixos.org.
 PATH is the package name, DESCRIPTION is the link text,
 BACKEND is the export backend."
-  (let ((url (format nixos-package-search-url-template (url-hexify-string path)))
-        (desc (or description path)))
-    (pcase backend
-      ('html (format "<a href=\"%s\">%s</a>" url desc))
-      ('latex (format "\\href{%s}{%s}" url desc))
-      (_ desc))))
+  (nixos-org--export nixos-package-search-url-template
+                     path description backend))
 
 (org-link-set-parameters "nixos-package"
                          :follow #'nixos-org-package-open
@@ -86,12 +88,8 @@ BACKEND is the export backend."
 
 (defun nixos-org-option-export (path description backend _info)
   "Export a `nixos-option:' link to search.nixos.org."
-  (let ((url (format nixos-option-search-url-template (url-hexify-string path)))
-        (desc (or description path)))
-    (pcase backend
-      ('html (format "<a href=\"%s\">%s</a>" url desc))
-      ('latex (format "\\href{%s}{%s}" url desc))
-      (_ desc))))
+  (nixos-org--export nixos-option-search-url-template
+                     path description backend))
 
 (org-link-set-parameters "nixos-option"
                          :follow #'nixos-org-option-open
@@ -104,21 +102,12 @@ BACKEND is the export backend."
   "Open a `nixos-package-search:' Org link for PATH (search term).
 Opens the browse-packages tabulated list filtered to packages
 whose names contain PATH as a substring."
-  (nixos--packages-load)
-  (let ((matching (cl-remove-if-not
-                   (lambda (name)
-                     (string-match-p (regexp-quote path) name))
-                   nixos--packages-keys)))
-    (nixos-browse-packages matching path)))
+  (nixos-browse-packages (nixos--search-names 'package path) path))
 
 (defun nixos-org-package-search-export (path description backend _info)
   "Export a `nixos-package-search:' link to search.nixos.org."
-  (let ((url (format nixos-package-search-url-template (url-hexify-string path)))
-        (desc (or description path)))
-    (pcase backend
-      ('html (format "<a href=\"%s\">%s</a>" url desc))
-      ('latex (format "\\href{%s}{%s}" url desc))
-      (_ desc))))
+  (nixos-org--export nixos-package-search-url-template
+                     path description backend))
 
 (org-link-set-parameters "nixos-package-search"
                          :follow #'nixos-org-package-search-open
@@ -131,20 +120,12 @@ whose names contain PATH as a substring."
   "Open a `nixos-option-search:' Org link for PATH (search term).
 Opens the browse-options tabulated list filtered to options
 whose names contain PATH as a substring."
-  (let ((matching (cl-remove-if-not
-                   (lambda (name)
-                     (string-match-p (regexp-quote path) name))
-                   (hash-table-keys (nixos--options-load)))))
-    (nixos-browse-options matching path)))
+  (nixos-browse-options (nixos--search-names 'option path) path))
 
 (defun nixos-org-option-search-export (path description backend _info)
   "Export a `nixos-option-search:' link to search.nixos.org."
-  (let ((url (format nixos-option-search-url-template (url-hexify-string path)))
-        (desc (or description path)))
-    (pcase backend
-      ('html (format "<a href=\"%s\">%s</a>" url desc))
-      ('latex (format "\\href{%s}{%s}" url desc))
-      (_ desc))))
+  (nixos-org--export nixos-option-search-url-template
+                     path description backend))
 
 (org-link-set-parameters "nixos-option-search"
                          :follow #'nixos-org-option-search-open

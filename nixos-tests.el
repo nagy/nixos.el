@@ -524,8 +524,7 @@ converted to strings by stripping the leading colon."
         (should (eq (alist-get 'type rec) 'option))
         (should (equal (alist-get 'name rec) "services.foo.enable"))
         (should (eq (alist-get 'handler rec) 'nixos--bookmark-jump))
-        (should-not (alist-get 'local rec))
-        (should-not (alist-get 'local-dir rec)))
+        (should-not (alist-get 'source rec)))
       (kill-buffer))))
 
 (ert-deftest nixos-bookmark-jump-option ()
@@ -570,8 +569,7 @@ converted to strings by stripping the leading colon."
                  (lambda () (setq called-dir default-directory))))
         (nixos--bookmark-jump '((type . package)
                                 (name . "htop")
-                                (local . t)
-                                (local-dir . "/tmp/my-project/")))
+                                (source . (local . "/tmp/my-project/"))))
         (should (equal called-dir "/tmp/my-project/"))))))
 
 
@@ -704,6 +702,15 @@ converted to strings by stripping the leading colon."
       (should (string-match-p "boolean" ann))
       (should (string-match-p "Enable foo" ann)))))
 
+(ert-deftest nixos-marginalia-option-annotator-no-type ()
+  "Option annotator still shows the description when type is absent."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable" :description "Enable foo"))
+    (let ((ann (nixos--marginalia-option-annotator "services.foo.enable")))
+      (should (stringp ann))
+      (should (string-match-p "Enable foo" ann)))))
+
 (ert-deftest nixos-marginalia-package-annotator ()
   "Package annotator shows version and description."
   (nixos-test--with-packages
@@ -768,6 +775,20 @@ converted to strings by stripping the leading colon."
 
 
 ;;; Embark
+
+(ert-deftest nixos-search-names-substring ()
+  "`nixos--search-names' filters both types by substring."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.htop.enable" :description "a")
+       '("services.foo.enable" :description "b"))
+    (should (equal (nixos--search-names 'option "htop")
+                   '("services.htop.enable"))))
+  (nixos-test--with-packages
+      (nixos-test--packages-hash
+       '("legacyPackages.x86_64-linux.htop" :pname "htop")
+       '("legacyPackages.x86_64-linux.neovim" :pname "neovim"))
+    (should (equal (nixos--search-names 'package "htop") '("htop")))))
 
 (ert-deftest nixos-embark-export-option ()
   "Embark option export calls `nixos-browse-options' with candidates."
@@ -923,11 +944,9 @@ converted to strings by stripping the leading colon."
           (should (eq nixos--browse-type 'package))
           (should (equal nixos--browse-name "urlpkgname"))
           (should (equal nixos--browse-out-path "/nix/store/urlpkg"))
-          ;; URL state is set
-          (should nixos--browse-url)
-          (should (equal nixos--browse-url-str "https://example.com/archive.tar.gz"))
-          ;; not local
-          (should-not nixos--browse-local)))
+          ;; URL source is set
+          (should (equal nixos--browse-source
+                         '(url . "https://example.com/archive.tar.gz")))))
       (kill-buffer displayed))))
 
 (ert-deftest nixos-package-url-error ()
@@ -949,7 +968,8 @@ converted to strings by stripping the leading colon."
                  (let ((vec (vector meta-ht "/nix/store/ref" "1.0" '[] '[] "refpkg" nil)))
                    (nixos--parse-package-result vec)))))
       (nixos-package-url "https://example.com/pkg.tar.gz")
-      (should (equal nixos--browse-url-str "https://example.com/pkg.tar.gz"))
+      (should (equal nixos--browse-source
+                     '(url . "https://example.com/pkg.tar.gz")))
       (cl-letf (((symbol-function 'nixos-package-url)
                  (lambda (url) (setq refreshed url))))
         (nixos-browse-refresh)
@@ -971,8 +991,8 @@ converted to strings by stripping the leading colon."
         (should (eq (alist-get 'type rec) 'package))
         (should (equal (alist-get 'name rec) "urlpkg"))
         (should (eq (alist-get 'handler rec) 'nixos--bookmark-jump))
-        (should (eq (alist-get 'browse-url rec) t))
-        (should (equal (alist-get 'browse-url-str rec) "https://example.com/bkmk.tar.gz")))
+        (should (equal (alist-get 'source rec)
+                       '(url . "https://example.com/bkmk.tar.gz"))))
       (kill-buffer))))
 
 (ert-deftest nixos-bookmark-jump-url ()
@@ -984,8 +1004,7 @@ converted to strings by stripping the leading colon."
                (lambda (url) (setq called-url url))))
       (nixos--bookmark-jump '((type . package)
                               (name . "somepkg")
-                              (browse-url . t)
-                              (browse-url-str . "https://example.com/from-bookmark.tar.gz")))
+                              (source . (url . "https://example.com/from-bookmark.tar.gz"))))
       (should (equal called-url "https://example.com/from-bookmark.tar.gz")))))
 
 (ert-deftest nixos-package-url-fallback-name ()

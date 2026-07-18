@@ -26,9 +26,9 @@ fails the build.
 2. defgroup / defcustom (6 options incl. URL templates for search.nixos.org)
 3. Cache (hash-table vars, load functions, `nixos--ensure-nixpkgs-root`,
    `nixos-refresh-cache`)
-4. Helpers (`nixos--slurp-description`, `nixos--package-expr-tail`,
-   `nixos--parse-package-result`, `nixos--call-nix-package-expr`,
-   `nixos--call-nix-url-expr`)
+4. Helpers (`nixos--slurp-description`, `nixos--search-names`,
+   `nixos--package-expr-tail`, `nixos--parse-package-result`,
+   `nixos--call-nix-package-expr`, `nixos--call-nix-url-expr`)
 5. Options / Packages collection + annotation
 6. Browse Major Mode (`nixos-browse-mode`)
 7. Display helpers (`nixos--display-option`, `nixos--display-package`)
@@ -38,53 +38,64 @@ fails the build.
 10. Thing-At-Point, Tabulated Browse Mode (shared macro), Eldoc
 11. Marginalia annotators, Package Browse Mode, Embark export + actions
 
-### ol-nixos.el (Org link types, ~155 lines)
+### ol-nixos.el (Org link types, ~130 lines)
 
 Provides four Org link types:
 - `nixos-package:` / `nixos-package-local:` (path) / URL variant
 - `nixos-option:`
 - `nixos-package-search:` / `nixos-option-search:` (filtered browse)
 
-Loaded via `with-eval-after-load 'org` in nixos.el to avoid recursive
-load.
+Opt-in module, like Org's own `ol-*` modules: it does a plain
+`(require 'ol)` + `(require 'nixos)` and users enable it with
+`(with-eval-after-load 'org (require 'ol-nixos))` in their config.
+nixos.el does not know it exists.
 
 ## Conventions
 
 ### Byte-compiler silencing
 
-External vars/faces from optional deps (marginalia, embark) are
-declared with `(defvar <var> <val>)` **with an explicit value**
-(usually `nil`).  `(defvar foo)` without a value does NOT bind the
-variable, so `symbol-value` still errors.
+External vars from optional deps (marginalia, embark) are declared
+with **value-less** `(defvar <var>)`.  A top-level value-less defvar
+marks the symbol special for the whole file, which silences
+"reference to free variable" warnings.  All actual accesses happen
+inside `with-eval-after-load`, when the real package has bound the
+variable, so nothing is ever void at runtime.
+
+Never give these defvars a value:
 
 ```elisp
-(defvar marginalia-annotator-registry nil)  ;; correct
-(defvar embark-general-map nil)             ;; correct
-(defvar foo)                                ;; wrong — still void
+(defvar marginalia-annotator-registry)      ;; correct
+(defvar marginalia-annotator-registry nil)  ;; WRONG — see below
 ```
 
-### ol-nixos.el: declare-function, not require
+`defcustom` does not override an already-bound variable — that is
+the mechanism that lets users `setq` a variable before loading its
+package.  So a `(defvar <var> nil)` in nixos.el would, whenever
+nixos.el loads *before* marginalia/embark, silently replace their
+defcustom defaults with nil (e.g. wiping marginalia's entire default
+annotator registry).
 
-`ol-nixos.el` cannot `(require 'nixos)` at top-level because
-`nixos.el` loads `ol-nixos.el` via `with-eval-after-load 'org`.
-A top-level `require` causes recursive load if Org triggers while
-`nixos.el` is still being parsed.  Use `declare-function` stubs
-and `defvar` declarations instead:
+Corollary for keymaps: `defvar-keymap :parent` is evaluated once, at
+definition time, when `embark-general-map` may not exist yet.  The
+embark keymaps are therefore defined without `:parent` and wired up
+via `set-keymap-parent` inside `with-eval-after-load 'embark`.
+
+### ol-nixos.el: opt-in, plain require
+
+`ol-nixos.el` is loaded by the *user*, never by `nixos.el`, so it
+uses ordinary top-level requires — no `declare-function` stubs:
 
 ```elisp
-;; Wrong — recursive load
 (require 'ol)
 (require 'nixos)
-
-;; Correct
-(require 'ol)
-(declare-function nixos-package "nixos")
-(defvar nixos--packages-keys)
 ```
 
-Since `ol-nixos.el` is only ever loaded after `nixos.el` (via the
-`with-eval-after-load` hook), all functions and vars declared this
-way are guaranteed to be defined at load time.
+Do not reintroduce an auto-load of `ol-nixos` from `nixos.el`
+(e.g. `(with-eval-after-load 'org (require 'ol-nixos))` at the end
+of `nixos.el`).  If Org is already loaded, that hook fires while
+`nixos.el` is still mid-load — before its `provide` — so the
+`(require 'nixos)` in `ol-nixos.el` would trigger a recursive load
+error, forcing the old declare-function-stub workaround.
 
 ### Build-time data baking
 
@@ -174,8 +185,10 @@ in [pkg.meta pkg.outPath …]
 ```
 
 The same `nixos--package-expr-tail` constant is shared across all
-three package evaluation paths (nixpkgs, local, URL).  Result
-parsing is handled by `nixos--parse-package-result`, a shared
+three package evaluation paths (nixpkgs, local, URL).
+`nixos--call-nix-url-expr` is a thin wrapper that delegates to
+`nixos--call-nix-package-expr` with `--impure --argstr url URL`.
+Result parsing is handled by `nixos--parse-package-result`, a shared
 helper that parses the JSON vector into an alist.
 
 **Dotted attribute paths with digit segments.**  Package names
@@ -194,6 +207,30 @@ of `${cand}` interpolation:
 in …
 ```
 
+### Package origin: `nixos--browse-source`
+
+A single buffer-local encodes where a package came from:
+
+- `nil` — nixpkgs package (or an option buffer)
+- `(local . DIR)` — evaluated from DIR/default.nix
+- `(url . URL)` — evaluated from a tarball at URL
+
+It is passed as the third argument to `nixos--display-package`,
+stored by `nixos--browse-setup`, dispatched with `pcase` in
+`nixos-browse-refresh` and `nixos--bookmark-jump`, and serialized
+into detail bookmarks as the `source` field.  A non-nil source also
+means "do not point `default-directory` at the store path" — the
+buffer is for a local project or remote tarball, not an installed
+package.  Do not add parallel boolean flags for new origins; extend
+the enum instead.
+
+### Browse mode conventions
+
+`nixos-browse-mode` derives from `special-mode`: read-only buffers,
+`q`, and `g` → `revert-buffer` come for free.  Refresh goes through
+`revert-buffer-function` (`nixos-browse-refresh`); no explicit
+`read-only-mode` calls or custom `g` bindings.
+
 ### Tabulated-list conventions
 
 - Entry format: `(id [id col1 col2...])`
@@ -207,6 +244,9 @@ in …
   `refresh` (`g`) preserves the filter.
 - Mode map inherits from `tabulated-list-mode-map`
 - `hl-line-mode 1` enabled by default
+- Refresh goes through `revert-buffer-function` (set to the generated
+  refresh function); `g` works via `tabulated-list-mode`'s standard
+  `revert-buffer` binding and preserves the buffer-local filter.
 - The modes set `bookmark-make-record-function` to
   `nixos--browse-table-bookmark-make-record` for saving filtered
   table views.
@@ -216,18 +256,22 @@ in …
 Two kinds of bookmarks are supported:
 
 **Detail bookmarks** — set from `nixos-browse-mode` buffers
-(single option/package).  Record fields: `type`, `name`,
-`local`, `local-dir`, `browse-url`, `browse-url-str`.
+(single option/package).  Record fields: `type`, `name`, `source`
+(the `nixos--browse-source` value, serialized as-is).
 
 **Table bookmarks** — set from `nixos-browse-options-mode` /
 `nixos-browse-packages-mode` buffers (filtered lists).  Record
 fields: `type`, `name-prefix`.  On reopen, the filtered
 `name-list` is re-derived from the live cache via
-`nixos--filter-by-prefix`, so new matching options/packages
+`nixos--search-names`, so new matching options/packages
 appear automatically.  A nil `name-prefix` means "show all".
 
+`nixos--search-names` is the single substring filter shared by
+table bookmarks and the `nixos-*-search:` Org link types.
+
 `nixos--bookmark-jump` dispatches by checking for `name-prefix`
-via `assq` (table), then falling through to the detail handler.
+via `assq` (table), then falling through to the detail handler,
+which dispatches on the `source` field with `pcase`.
 
 ### Test conventions
 
@@ -321,7 +365,7 @@ should be pure where possible — makes them testable without mocking.
 |-----------|-----------|-----|
 | Emacs 30.1 | yes | `json-parse-buffer`, `defvar-keymap`, `with-memoization` |
 | nix-mode | soft | `nix-instantiate-executable` for package metadata |
-| org-mode | soft | `ol-nixos.el` Org link types (loaded via `with-eval-after-load`) |
+| org-mode | soft | `ol-nixos.el` Org link types (opt-in `(require 'ol-nixos)`) |
 | marginalia | soft | annotator registry |
 | embark | soft | export + actions |
 
@@ -334,6 +378,19 @@ available, with built-in fallbacks (`bold`, `default`).  No
 left-to-right, skipping undefined faces.
 
 ## TODO
+
+- **One data shape** — Package data currently flows through three
+  shapes: hash tables (parsed JSON), symbol-keyed alists
+  (`nixos--parse-package-result`), and raw vectors, with
+  `:null`/`:json-false` checks scattered across access sites.
+  Normalize at the parse boundary into a `cl-defstruct nixos-pkg`
+  with plain nil for absent values, so display code never sees JSON
+  artifacts.  Also replace the positional JSON array emitted by the
+  Nix expression with a JSON *object*: positional `(aref result N)`
+  parsing means every new field (e.g. the hooks TODO below) must
+  touch expr + parser + tests in lockstep.  Self-describing keys
+  avoid that — the `outPath` magic-key gotcha only applies to keys
+  literally named `outPath`, so `storePath`-style names are safe.
 
 - **Batch package metadata** — `nixos--package-meta` evaluates
   `nix-instantiate` per-package, importing `<nixpkgs>` each time.
@@ -391,8 +448,8 @@ left-to-right, skipping undefined faces.
 
   **Jump target:**
   - Local projects (`nixos-package-local`): trivial — the project
-    directory is already known via `nixos--browse-local-dir`,
-    so `(expand-file-name "Cargo.lock" nixos--browse-local-dir)`
+    directory is already known via the `(local . DIR)` value of
+    `nixos--browse-source`, so `(expand-file-name "Cargo.lock" DIR)`
     gives the lock-file location.
   - Nixpkgs packages: harder — need the source store path.  The
     lock-file path (`./Cargo.lock` in the source tree) resolves to

@@ -60,6 +60,12 @@
 ;;
 ;;   (with-eval-after-load 'nix-mode
 ;;     (add-hook 'nix-mode-hook #'nixos-thing-at-point-setup))
+;;
+;; Org link types (nixos-package:, nixos-option:, ...) are provided
+;; by the separate opt-in module ol-nixos.el:
+;;
+;;   (with-eval-after-load 'org
+;;     (require 'ol-nixos))
 
 ;;; Code:
 
@@ -253,16 +259,33 @@ permanently since Nix store paths are immutable."
     (or desc pname "")))
 
 (defun nixos--trim-description (desc)
-  "Collapse newlines in DESC and truncate to `nixos-annotation-width' characters."
+  "Collapse newlines in DESC and truncate to `nixos-annotation-width' columns."
   (when (and desc (not (string-empty-p desc)))
-    (string-limit (string-replace "\n" " " desc)
-                  nixos-annotation-width)))
+    (truncate-string-to-width (string-replace "\n" " " desc)
+                              nixos-annotation-width)))
 
 (defun nixos--annotate (description)
   "Return a right-aligned annotation string for DESCRIPTION."
   (when-let* ((trimmed (nixos--trim-description description)))
     (concat (propertize " " 'display '(space :align-to center))
             trimmed)))
+
+(defun nixos--search-names (type term)
+  "Return names of TYPE matching TERM as a substring.
+TYPE is `option' or `package'.  Matches against the loaded
+cache; package names are the short attribute names (system
+prefix stripped).  Shared by table bookmarks and the Org
+`nixos-*-search:' link types."
+  (let ((re (regexp-quote term)))
+    (cl-case type
+      (option
+       (cl-remove-if-not (lambda (name) (string-match-p re name))
+                         (hash-table-keys (nixos--options-load))))
+      (package
+       (nixos--packages-load)
+       (cl-remove-if-not (lambda (name) (string-match-p re name))
+                         nixos--packages-keys))
+      (t (user-error "Unknown type %s" type)))))
 
 
 ;;; Options
@@ -319,11 +342,10 @@ ACTION."
   :doc "Keymap for `nixos-browse-mode'."
   :parent special-mode-map
   "b" #'nixos-browse-search-url
-  "g" #'nixos-browse-refresh
   "r" #'nixos-browse-show-requisites
   "w" #'nixos-browse-copy-store-path)
 
-(define-derived-mode nixos-browse-mode fundamental-mode "NixOS-Browse"
+(define-derived-mode nixos-browse-mode special-mode "NixOS-Browse"
   "Major mode for browsing NixOS option / package details.
 
 \\{nixos-browse-mode-map}"
@@ -343,35 +365,23 @@ ACTION."
 (defvar-local nixos--browse-homepage nil
   "Homepage URL of the package in the current browse buffer, if any.")
 
-(defvar-local nixos--browse-local nil
-  "Non-nil if the current browse buffer shows a local package.
-Set by `nixos-package-local', used by `nixos-browse-refresh'
-to re-evaluate the local default.nix instead of looking up a
-nixpkgs package.")
+(defvar-local nixos--browse-source nil
+  "Where the package in the current browse buffer came from.
+nil for a nixpkgs package (or an option); (local . DIR) for a
+package evaluated from DIR/default.nix; (url . URL) for a
+package evaluated from a tarball at URL.  Used by
+`nixos-browse-refresh' and bookmarks to re-evaluate the same
+source.")
 
-(defvar-local nixos--browse-local-dir nil
-  "Full directory path of the local package, if `nixos--browse-local' is non-nil.
-Used by `nixos-browse-refresh' to re-evaluate in the correct directory.")
-
-(defvar-local nixos--browse-url nil
-  "Non-nil if the current browse buffer shows a URL package.
-Set by `nixos-package-url', used by `nixos-browse-refresh'
-to re-evaluate the URL instead of looking up a nixpkgs package.")
-
-(defvar-local nixos--browse-url-str nil
-  "The URL of the package, if `nixos--browse-url' is non-nil.
-Used by `nixos-browse-refresh' to re-fetch the same URL.")
-
-(defun nixos--browse-setup (type name &optional out-path)
-  "Configure the current buffer for browsing TYPE (option or package) NAME."
+(defun nixos--browse-setup (type name &optional out-path source)
+  "Configure the current buffer for browsing TYPE (option or package) NAME.
+OUT-PATH is the package store path, if any.  SOURCE is the
+package origin as understood by `nixos--browse-source'."
   (setq nixos--browse-type type
         nixos--browse-name name
         nixos--browse-out-path out-path
         nixos--browse-homepage nil
-        nixos--browse-local nil
-        nixos--browse-local-dir nil
-        nixos--browse-url nil
-        nixos--browse-url-str nil))
+        nixos--browse-source source))
 
 (defun nixos-browse-show-requisites ()
   "Open the store path of the current package in `nix-store-path-mode'.
@@ -433,12 +443,12 @@ convention."
   (let ((pt (point)))
     (cl-case nixos--browse-type
       (option (nixos-option nixos--browse-name))
-      (package (cond (nixos--browse-url
-                      (nixos-package-url nixos--browse-url-str))
-                     (nixos--browse-local
-                      (let ((default-directory nixos--browse-local-dir))
-                        (nixos-package-local)))
-                     (t (nixos-package nixos--browse-name))))
+      (package (pcase nixos--browse-source
+                 (`(url . ,url) (nixos-package-url url))
+                 (`(local . ,dir)
+                  (let ((default-directory dir))
+                    (nixos-package-local)))
+                 (_ (nixos-package nixos--browse-name))))
       (t (user-error "Unknown browse type %s" nixos--browse-type)))
     (goto-char pt)))
 
@@ -483,18 +493,20 @@ convention."
                     ((file-exists-p full)))
           (setq default-directory root))
         (goto-char (point-min))
-        (read-only-mode 1)
         (set-buffer-modified-p nil)))
     (pop-to-buffer buf)))
 
-(defun nixos--display-package (name info &optional local)
+(defun nixos--display-package (name info &optional source)
   "Create a formatted detail buffer for Nix package NAME with INFO.
 INFO is an alist from `nixos--package-meta' with keys meta, outPath,
 version, buildInputs and nativeBuildInputs.
 
-When LOCAL is non-nil, do not `cd' into the store path even if it
-exists — the buffer is for a local project, not an installed Nix
-package."
+SOURCE is the package origin as understood by
+`nixos--browse-source': nil for a nixpkgs package, (local . DIR)
+or (url . URL) otherwise.  When SOURCE is non-nil,
+`default-directory' is not pointed at the store path — the
+buffer is for a local project or a remote tarball, not an
+installed Nix package."
   (let ((meta-data (alist-get 'meta info))
         (out-path (alist-get 'outPath info))
         (buf (get-buffer-create (format "*nixos-package %s*" name))))
@@ -502,7 +514,7 @@ package."
       (let ((inhibit-read-only t))
         (erase-buffer)
         (nixos-browse-mode)
-        (nixos--browse-setup 'package name out-path)
+        (nixos--browse-setup 'package name out-path source)
         ;; Title
         (insert (propertize (format "%-14s" "Name:") 'face 'nixos-field-label)
                 (propertize name 'face 'nixos-package-name) "\n")
@@ -527,8 +539,8 @@ package."
                                             'dired-directory)
                                            ((file-exists-p out-path) nil)
                                            (t 'error))))
-            (if (and (not local) (file-directory-p out-path))
-                (cd out-path)))
+            (when (and (null source) (file-directory-p out-path))
+              (setq default-directory (file-name-as-directory out-path))))
           ;; Meta fields (hash table from parsed JSON)
           (when meta-data
             (let ((desc (gethash "description" meta-data)))
@@ -600,7 +612,6 @@ package."
                       (insert "???")))
                   (insert "\n"))))))
         (goto-char (point-min))
-        (read-only-mode 1)
         (set-buffer-modified-p nil)))
     (pop-to-buffer buf)))
 
@@ -672,28 +683,13 @@ it with pkgs.callPackage, and extracts package metadata.
 
 Uses --impure since the tarball is fetched without a pinned hash.
 Returns the same format as `nixos--call-nix-package-expr'."
-  (when (and (boundp 'nix-instantiate-executable)
-             (stringp nix-instantiate-executable))
-    (let* ((stderr-file (make-temp-file "nixos-stderr-"))
-           (expr (concat "{url}: let"
-                         "  pkgs = import <nixpkgs> {};"
-                         "  pkg = pkgs.callPackage"
-                         "    (builtins.fetchTarball url) {};"
-                         nixos--package-expr-tail))
-           (args (list nix-instantiate-executable nil (list t stderr-file) nil
-                       "--impure" "--strict" "--json" "--eval" "-E" expr
-                       "--argstr" "url" url)))
-      (unwind-protect
-          (with-temp-buffer
-            (let ((exit-code (apply 'call-process args)))
-              (if (zerop exit-code)
-                  (progn
-                    (goto-char (point-min))
-                    (nixos--parse-package-result (json-parse-buffer)))
-                (cons nil (with-temp-buffer
-                            (insert-file-contents stderr-file)
-                            (buffer-string))))))
-        (delete-file stderr-file)))))
+  (nixos--call-nix-package-expr
+   (concat "{url}: let"
+           "  pkgs = import <nixpkgs> {};"
+           "  pkg = pkgs.callPackage"
+           "    (builtins.fetchTarball url) {};"
+           nixos--package-expr-tail)
+   "--impure" "--argstr" "url" url))
 
 (defun nixos--package-meta (package-name)
   "Fetch metadata, outPath, version and build deps for PACKAGE-NAME.
@@ -749,23 +745,7 @@ Intended for use as `bookmark-make-record-function'."
     (type . ,nixos--browse-type)
     (name . ,nixos--browse-name)
     (handler . nixos--bookmark-jump)
-    (local . ,nixos--browse-local)
-    (local-dir . ,nixos--browse-local-dir)
-    (browse-url . ,nixos--browse-url)
-    (browse-url-str . ,nixos--browse-url-str)))
-
-(defun nixos--filter-by-prefix (cache key-fn name-prefix)
-  "Return a list of names from CACHE matching NAME-PREFIX.
-KEY-FN is applied to each hash key to extract the display name
-(nil for options, `string-remove-prefix' for packages)."
-  (let ((names nil))
-    (maphash
-     (lambda (raw-key _data)
-       (let ((name (if key-fn (funcall key-fn raw-key) raw-key)))
-         (when (string-match-p (regexp-quote name-prefix) name)
-           (push name names))))
-     cache)
-    (nreverse names)))
+    (source . ,nixos--browse-source)))
 
 ;;;###autoload
 (defun nixos--bookmark-jump (bookmark)
@@ -773,26 +753,12 @@ KEY-FN is applied to each hash key to extract the display name
 Called by the bookmark system."
   (let ((type (alist-get 'type bookmark))
         (name (alist-get 'name bookmark))
-        (name-prefix (alist-get 'name-prefix bookmark))
-        (local (alist-get 'local bookmark))
-        (local-dir (alist-get 'local-dir bookmark))
-        (browse-url (alist-get 'browse-url bookmark))
-        (browse-url-str (alist-get 'browse-url-str bookmark)))
+        (name-prefix (alist-get 'name-prefix bookmark)))
     (if (assq 'name-prefix bookmark)
         ;; Table (search) bookmark — re-derive filtered name-list
         ;; from current cache, so new results appear on reopen.
-        (let ((name-list
-               (when name-prefix
-                 (cl-case type
-                   (option
-                    (nixos--filter-by-prefix (nixos--options-load)
-                                             nil name-prefix))
-                   (package
-                    (nixos--filter-by-prefix (nixos--packages-load)
-                     (lambda (k)
-                       (string-remove-prefix "legacyPackages.x86_64-linux." k))
-                     name-prefix))
-                   (t (user-error "Unknown bookmark type %s" type))))))
+        (let ((name-list (when name-prefix
+                           (nixos--search-names type name-prefix))))
           (cl-case type
             (option (nixos-browse-options name-list name-prefix))
             (package (nixos-browse-packages name-list name-prefix))
@@ -800,12 +766,12 @@ Called by the bookmark system."
       ;; Detail bookmark.
       (cl-case type
         (option (nixos-option name))
-        (package (cond (browse-url
-                        (nixos-package-url browse-url-str))
-                       (local
-                        (let ((default-directory local-dir))
-                          (nixos-package-local)))
-                       (t (nixos-package name))))
+        (package (pcase (alist-get 'source bookmark)
+                   (`(url . ,url) (nixos-package-url url))
+                   (`(local . ,dir)
+                    (let ((default-directory dir))
+                      (nixos-package-local)))
+                   (_ (nixos-package name))))
         (t (user-error "Unknown bookmark type %s" type))))))
 
 
@@ -873,11 +839,8 @@ No memoization — intended for local development where
                           "  pkg = pkgs.callPackage ./default.nix {};"
                           nixos--package-expr-tail))))
       (if info
-          (progn
-            (let ((pkg-name (or (alist-get 'pname info) display-name)))
-              (nixos--display-package pkg-name info t))
-            (setq nixos--browse-local t)
-            (setq nixos--browse-local-dir full-dir))
+          (nixos--display-package (or (alist-get 'pname info) display-name)
+                                  info (cons 'local full-dir))
         (user-error "%sdefault.nix:\n%s" display-name stderr)))))
 
 ;;;###autoload
@@ -885,6 +848,10 @@ No memoization — intended for local development where
   "Display the Nix package defined by a tarball at URL.
 Downloads and evaluates the tarball via
 `builtins.fetchTarball' + `pkgs.callPackage'.
+
+Only point this at URLs you trust: evaluation uses --impure, so
+the tarball's Nix code can read local files and environment
+variables, and trigger import-from-derivation builds.
 
 No memoization — intended for remote development where the
 tarball may change between invocations."
@@ -894,11 +861,8 @@ tarball may change between invocations."
     (pcase-let ((`(,info . ,stderr)
                  (nixos--call-nix-url-expr url)))
       (if info
-          (progn
-            (let ((pkg-name (or (alist-get 'pname info) display-name)))
-              (nixos--display-package pkg-name info t))
-            (setq nixos--browse-url t)
-            (setq nixos--browse-url-str url))
+          (nixos--display-package (or (alist-get 'pname info) display-name)
+                                  info (cons 'url url))
         (user-error "URL %s:\n%s" url stderr)))))
 
 
@@ -995,8 +959,7 @@ Internal use only."
          :doc ,(format "Keymap for `%s'." mode)
          :parent tabulated-list-mode-map
          "RET" #',visit
-         "b"   #',search-url
-         "g"   #',refresh)
+         "b"   #',search-url)
 
        (define-derived-mode ,mode tabulated-list-mode
          ,mode-label
@@ -1008,6 +971,7 @@ Internal use only."
          (setq tabulated-list-sort-key ',sort-key)
          (tabulated-list-init-header)
          (hl-line-mode 1)
+         (setq-local revert-buffer-function #',refresh)
          (setq-local bookmark-make-record-function
                      #'nixos--browse-table-bookmark-make-record))
 
@@ -1046,8 +1010,10 @@ appear in the list." typestr)
          (interactive)
          (browse-url (format ,url-fmt (,current-name-fn))))
 
-       (defun ,refresh ()
-         ,(format "Refresh the %s table." typestr)
+       (defun ,refresh (&rest _ignored)
+         ,(format "Refresh the %s table.
+Optional IGNORED args accommodate the `revert-buffer-function'
+calling convention." typestr)
          (interactive)
          (setq tabulated-list-entries
                (,entries-fn nixos--browse-name-list))
@@ -1061,7 +1027,7 @@ appear in the list." typestr)
 \<%s>
 \\[%s] on an entry to view full details,
 \\[%s] to open on search.nixos.org,
-\\[%s] to reload the data.
+\\[revert-buffer] to reload the data.
 
 When NAME-LIST is non-nil (a list of names), only those entries
 are displayed.  This is used by Embark export.
@@ -1071,7 +1037,7 @@ When NAME-PREFIX is non-nil, it is appended to the buffer name
 to coexist in separate buffers.
 
 Emacs' built-in narrowing (\\[narrow-to-defun] etc.) can be used
-to filter the view in-place." typestr typestr mode-map visit search-url refresh)
+to filter the view in-place." typestr typestr mode-map visit search-url)
          (interactive)
          (let ((buf-name (if name-prefix
                              (concat (substring ,buffer-name 0 -1)
@@ -1137,13 +1103,16 @@ Add this alongside `nixos-thing-at-point-setup' in
 
 (defun nixos--marginalia-option-annotator (cand)
   "Marginalia annotator for `nixos-option' completion candidates.
-Shows the option type and description."
-  (when-let* ((data (gethash cand (nixos--options-load)))
-              (type (gethash "type" data))
-              (desc (nixos--slurp-description data)))
-    (concat (propertize (concat "(" type ")")
-                        'face 'marginalia-type)
-            " " desc)))
+Shows the option type (when present) and the description."
+  (when-let* ((data (gethash cand (nixos--options-load))))
+    (let ((type (gethash "type" data))
+          (desc (nixos--slurp-description data)))
+      (when (or type (not (string-empty-p desc)))
+        (concat (when type
+                  (concat (propertize (concat "(" type ")")
+                                      'face 'marginalia-type)
+                          " "))
+                desc)))))
 
 (defun nixos--marginalia-package-annotator (cand)
   "Marginalia annotator for `nixos-package' completion candidates.
@@ -1159,7 +1128,11 @@ Shows the package version and description."
                         " "))
               (or desc "")))))
 
-(defvar marginalia-annotator-registry nil)
+;; Value-less defvar: silences the byte-compiler without binding the
+;; variable.  Giving it a value here would prevent marginalia's own
+;; `defcustom' default from taking effect when nixos.el loads first
+;; (`defcustom' never overrides an already-bound variable).
+(defvar marginalia-annotator-registry)
 
 (with-eval-after-load 'marginalia
   (add-to-list 'marginalia-annotator-registry
@@ -1188,9 +1161,12 @@ Shows the package version and description."
 
 ;;; Embark
 
-(defvar embark-exporters-alist nil)
-(defvar embark-keymap-alist nil)
-(defvar embark-general-map nil)
+;; Value-less defvars: silence the byte-compiler without binding the
+;; variables, so embark's own `defcustom' defaults survive when
+;; nixos.el loads first.
+(defvar embark-exporters-alist)
+(defvar embark-keymap-alist)
+(defvar embark-general-map)
 
 (defun nixos--embark-export-option (candidates)
   "Embark export function for NixOS option CANDIDATES."
@@ -1209,20 +1185,24 @@ Shows the package version and description."
   (browse-url (format nixos-package-search-url-template cand)))
 
 (defvar-keymap nixos-embark-option-map
-  :doc "Embark actions for NixOS option candidates."
-  :parent embark-general-map
+  :doc "Embark actions for NixOS option candidates.
+The parent is set to `embark-general-map' once Embark loads."
   "RET" #'nixos-option
   "b"   #'nixos--embark-browse-option-url
   "i"   #'insert)
 
 (defvar-keymap nixos-embark-package-map
-  :doc "Embark actions for Nix package candidates."
-  :parent embark-general-map
+  :doc "Embark actions for Nix package candidates.
+The parent is set to `embark-general-map' once Embark loads."
   "RET" #'nixos-package
   "b"   #'nixos--embark-browse-package-url
   "i"   #'insert)
 
 (with-eval-after-load 'embark
+  ;; `defvar-keymap :parent' is evaluated once, at definition time,
+  ;; when `embark-general-map' may not exist yet — wire it up here.
+  (set-keymap-parent nixos-embark-option-map embark-general-map)
+  (set-keymap-parent nixos-embark-package-map embark-general-map)
   (add-to-list 'embark-exporters-alist
                '(nixos-option . nixos--embark-export-option))
   (add-to-list 'embark-exporters-alist
@@ -1231,10 +1211,6 @@ Shows the package version and description."
                '(nixos-option . nixos-embark-option-map))
   (add-to-list 'embark-keymap-alist
                '(nixos-package . nixos-embark-package-map)))
-
-;; Org link support — loaded only when Org is present.
-(with-eval-after-load 'org
-  (require 'ol-nixos))
 
 (provide 'nixos)
 ;;; nixos.el ends here

@@ -13,6 +13,7 @@ interfaces for browsing NixOS options and Nix packages from Emacs.
 - Tabulated list views (=nixos-browse-options= / =nixos-browse-packages=) with Embark actions
 - Local project evaluation (=nixos-package-local=) and tarball URLs (=nixos-package-url=)
 - Org link types: =nixos-package:=, =nixos-option:=, =nixos-package-search:=, =nixos-option-search:=
+  (opt-in module, enable with =(with-eval-after-load 'org (require 'ol-nixos))=)
 - Marginalia annotations, eldoc, and bookmark support
 
 * Usage
