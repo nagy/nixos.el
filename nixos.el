@@ -39,6 +39,8 @@
 ;;
 ;;   M-x nixos-option   -- browse NixOS options
 ;;   M-x nixos-package  -- browse Nix packages
+;;   M-x nixos-browse-options / nixos-browse-packages -- table views
+;;   M-x nixos-package-local / nixos-package-url -- local/remote pkgs
 ;;
 ;; Both commands use the standard completion framework, so they work
 ;; with icomplete, vertico, fido-mode, etc.  Annotation support is
@@ -48,6 +50,10 @@
 ;;
 ;;   - `nixos-browse-mode' (major mode) powers the detail buffer with
 ;;     bookmark support and a `b' key to open search.nixos.org.
+;;
+;;   - Browse tables: `nixos-browse-options' / `nixos-browse-packages'
+;;     display sortable `tabulated-list-mode' tables with refresh
+;;     (`g'), bookmark support, and Embark export targets.
 ;;
 ;;   - `thingatpt' integration: in `nix-mode' buffers, point on a
 ;;     dotted identifier like `services.foo.enable' yields it via
@@ -60,7 +66,6 @@
 ;;
 ;;   (with-eval-after-load 'nix-mode
 ;;     (add-hook 'nix-mode-hook #'nixos-thing-at-point-setup))
-;;
 ;; Org link types (nixos-package:, nixos-option:, ...) are provided
 ;; by the separate opt-in module ol-nixos.el:
 ;;
@@ -217,7 +222,12 @@ Returns the cached hash table."
 (defun nixos-refresh-cache ()
   "Discard cached option and package data.
 The next `nixos-option' or `nixos-package' invocation will reload
-from the JSON files."
+from the JSON files.
+
+Clears the options, packages and package-metadata caches.
+`nixos--nixpkgs-root' is intentionally NOT cleared: the nixpkgs
+store path never changes within a session, so re-discovering it
+would be wasted work (see `nixos--ensure-nixpkgs-root')."
   (interactive)
   (setq nixos--options-cache nil
         nixos--packages-cache nil
@@ -229,24 +239,32 @@ from the JSON files."
   "Ensure `nixos--nixpkgs-root' is set from NIX_PATH.
 Calls nix-instantiate once to query `builtins.nixPath',
 then extracts the first `<nixpkgs>' entry.  Result is cached
-permanently since Nix store paths are immutable."
+permanently since Nix store paths are immutable.
+
+Unlike `nixos-refresh-cache', this cache is deliberately never
+cleared: nixpkgs store paths never change within a session, so a
+cleared cache would only mean re-running nix-instantiate for the
+same value.  When the nixpkgs channel changes (e.g. a NixOS
+upgrade), the Emacs session is restarted anyway."
   (unless nixos--nixpkgs-root
     (when (and (boundp 'nix-instantiate-executable)
                (stringp nix-instantiate-executable))
-      (with-temp-buffer
-        (when (zerop (call-process nix-instantiate-executable nil t nil
-                                   "--json" "--eval" "--expr"
-                                   "builtins.nixPath"))
-          (goto-char (point-min))
-          (let ((entries (json-parse-buffer)))
-            (when (vectorp entries)
-              (catch 'found
-                (dotimes (i (length entries))
-                  (let ((entry (aref entries i)))
-                    (when (and (hash-table-p entry)
-                               (equal (gethash "prefix" entry) "nixpkgs"))
-                      (setq nixos--nixpkgs-root (gethash "path" entry))
-                      (throw 'found t)))))))))))
+      (condition-case err
+          (with-temp-buffer
+            (when (zerop (call-process nix-instantiate-executable nil t nil
+                                       "--json" "--eval" "--expr"
+                                       "builtins.nixPath"))
+              (goto-char (point-min))
+              (let ((entries (json-parse-buffer)))
+                (when (vectorp entries)
+                  (catch 'found
+                    (dotimes (i (length entries))
+                      (let ((entry (aref entries i)))
+                        (when (and (hash-table-p entry)
+                                   (equal (gethash "prefix" entry) "nixpkgs"))
+                          (setq nixos--nixpkgs-root (gethash "path" entry))
+                          (throw 'found t)))))))))
+        (file-missing (ignore err)))))
   nixos--nixpkgs-root)
 
 
@@ -452,6 +470,25 @@ convention."
       (t (user-error "Unknown browse type %s" nixos--browse-type)))
     (goto-char pt)))
 
+(defun nixos--field (label value &optional face)
+  "Insert a LABEL field with VALUE into the current buffer.
+LABEL is right-padded to 14 columns.  VALUE may be nil (inserted
+as an empty value) or a string; optional FACE is applied to it."
+  (insert (propertize (format "%-14s" label) 'face 'nixos-field-label))
+  (when (and value (not (string-empty-p value)))
+    (insert (if face (propertize value 'face face) value)))
+  (insert "\n"))
+
+(defun nixos--link (label url)
+  "Insert a clickable LABEL field for URL into the current buffer."
+  (insert (propertize (format "%-14s" label) 'face 'nixos-field-label))
+  (when url
+    (insert-text-button url
+                        'action (lambda (_) (browse-url url))
+                        'follow-link t
+                        'help-echo (format "Browse %s" url)))
+  (insert "\n"))
+
 (defun nixos--display-option (name data)
   "Create a formatted detail buffer for NixOS option NAME with DATA."
   (let ((buf (get-buffer-create (format "*nixos-option %s*" name))))
@@ -463,24 +500,19 @@ convention."
         ;; Title
         (insert (propertize name 'face 'nixos-package-name) "\n\n")
         ;; Fields
-        (cl-labels ((field (label value)
-                      (insert (propertize (format "%-14s" label) 'face 'nixos-field-label))
-                      (when (and value (not (string-empty-p value)))
-                        (insert value))
-                      (insert "\n")))
-          (field "Type:" (gethash "type" data))
-          (let ((def (nixos--value-to-string (gethash "default" data))))
-            (field "Default:" def))
-          (let ((desc (gethash "description" data)))
-            (when (and desc (not (eq desc :null)))
-              (field "Description:" (propertize desc 'face 'nixos-description))))
-          (let ((example (nixos--value-to-string (gethash "example" data))))
-            (field "Example:" example))
-          (let ((decls (gethash "declarations" data)))
-            (when (and decls (not (eq decls :null)))
-              (field "Declared by:" nil)
-              (dolist (d (if (vectorp decls) (append decls nil) decls))
-                (insert "  " d "\n")))))
+        (nixos--field "Type:" (gethash "type" data))
+        (nixos--field "Default:"
+                      (nixos--value-to-string (gethash "default" data)))
+        (let ((desc (gethash "description" data)))
+          (when (and desc (not (eq desc :null)))
+            (nixos--field "Description:" desc 'nixos-description)))
+        (nixos--field "Example:"
+                      (nixos--value-to-string (gethash "example" data)))
+        (let ((decls (gethash "declarations" data)))
+          (when (and decls (not (eq decls :null)))
+            (nixos--field "Declared by:" nil)
+            (dolist (d (if (vectorp decls) (append decls nil) decls))
+              (insert "  " d "\n"))))
         ;; Point default-directory at the nixpkgs root so
         ;; embark-dwim / find-file-at-point can resolve relative
         ;; declaration paths like "nixos/modules/programs/htop.nix".
@@ -498,8 +530,11 @@ convention."
 
 (defun nixos--display-package (name info &optional source)
   "Create a formatted detail buffer for Nix package NAME with INFO.
-INFO is an alist from `nixos--package-meta' with keys meta, outPath,
-version, buildInputs and nativeBuildInputs.
+INFO is an alist from `nixos--package-meta' with keys `meta'
+(hash table of package metadata), `outPath' (string store path),
+`version' (string), `buildInputs' and `nativeBuildInputs' (vectors
+of dep attrsets with `name' and `storePath' keys), `pname'
+(string) and `repository' (URL string).
 
 SOURCE is the package origin as understood by
 `nixos--browse-source': nil for a nixpkgs package, (local . DIR)
@@ -518,61 +553,48 @@ installed Nix package."
         ;; Title
         (insert (propertize (format "%-14s" "Name:") 'face 'nixos-field-label)
                 (propertize name 'face 'nixos-package-name) "\n")
-        (cl-labels ((field (label value)
-                      (insert (propertize (format "%-14s" label) 'face 'nixos-field-label))
-                      (when (and value (not (string-empty-p value)))
-                        (insert value))
-                      (insert "\n"))
-                    (link (label url)
-                      (insert (propertize (format "%-14s" label) 'face 'nixos-field-label))
-                      (when url
-                        (insert-text-button url
-                                            'action (lambda (_) (browse-url url))
-                                            'follow-link t
-                                            'face 'link
-                                            'help-echo (format "Browse %s" url)))
-                      (insert "\n")))
-          (when out-path
-            (field "Store path:"
-                   (propertize out-path
-                               'face (cond ((file-directory-p out-path)
-                                            'dired-directory)
-                                           ((file-exists-p out-path) nil)
-                                           (t 'error))))
-            (when (and (null source) (file-directory-p out-path))
-              (setq default-directory (file-name-as-directory out-path))))
-          ;; Meta fields (hash table from parsed JSON)
-          (when meta-data
-            (let ((desc (gethash "description" meta-data)))
-              (when (and desc (not (eq desc :null)))
-                (field "Description:" (propertize desc 'face 'nixos-description))))
-            (field "Version:" (propertize (or (gethash "version" meta-data)
-                                              (alist-get 'version info)
-                                              "")
-                                          'face 'nixos-version))
-            (let ((hp (gethash "homepage" meta-data)))
-              (when (and hp (not (eq hp :null)))
-                (setq nixos--browse-homepage hp)
-                (link "Homepage:" hp)))
-            (let ((repo (alist-get 'repository info)))
-              (when (and repo (stringp repo) (not (string-empty-p repo)))
-                (link "Repository:" repo)))
-            (let ((lic (gethash "license" meta-data)))
-              (when lic
-                (field "License:"
-                       (cond ((hash-table-p lic) (gethash "fullName" lic))
-                             ((vectorp lic)
-                              (mapconcat (lambda (l)
-                                           (or (gethash "fullName" l) ""))
-                                         lic ", "))
-                             ((stringp lic) lic)
-                             (t (nixos--value-to-string lic))))))
-            (let ((maint (gethash "maintainers" meta-data)))
-              (when (and maint (not (eq maint :null)))
-                (field "Maintainers:" nil)
-                (dolist (m (if (vectorp maint) (append maint nil) maint))
-                  (when (hash-table-p m)
-                    (insert "  " (or (gethash "name" m) "") "\n")))))))
+        (when out-path
+          (nixos--field "Store path:"
+                        (propertize out-path
+                                    'face (cond ((file-directory-p out-path)
+                                                 'dired-directory)
+                                                ((file-exists-p out-path) nil)
+                                                (t 'error))))
+          (when (and (null source) (file-directory-p out-path))
+            (setq default-directory (file-name-as-directory out-path))))
+        ;; Meta fields (hash table from parsed JSON)
+        (when meta-data
+          (let ((desc (gethash "description" meta-data)))
+            (when (and desc (not (eq desc :null)))
+              (nixos--field "Description:" desc 'nixos-description)))
+          (nixos--field "Version:"
+                        (or (gethash "version" meta-data)
+                            (alist-get 'version info)
+                            "")
+                        'nixos-version)
+          (let ((hp (gethash "homepage" meta-data)))
+            (when (and hp (not (eq hp :null)))
+              (setq nixos--browse-homepage hp)
+              (nixos--link "Homepage:" hp)))
+          (let ((repo (alist-get 'repository info)))
+            (when (and repo (stringp repo) (not (string-empty-p repo)))
+              (nixos--link "Repository:" repo)))
+          (let ((lic (gethash "license" meta-data)))
+            (when lic
+              (nixos--field "License:"
+                            (cond ((hash-table-p lic) (gethash "fullName" lic))
+                                  ((vectorp lic)
+                                   (mapconcat (lambda (l)
+                                                (or (gethash "fullName" l) ""))
+                                              lic ", "))
+                                  ((stringp lic) lic)
+                                  (t (nixos--value-to-string lic))))))
+          (let ((maint (gethash "maintainers" meta-data)))
+            (when (and maint (not (eq maint :null)))
+              (nixos--field "Maintainers:" nil)
+              (dolist (m (if (vectorp maint) (append maint nil) maint))
+                (when (hash-table-p m)
+                  (insert "  " (or (gethash "name" m) "") "\n"))))))
         ;; Build dependencies
         ;; Compute global max-name across all dep types for alignment.
         (let ((global-max 0))
@@ -660,21 +682,23 @@ ALIST is nil and STDERR contains the error output.  Returns nil
 entirely if nix-instantiate is unavailable."
   (when (and (boundp 'nix-instantiate-executable)
              (stringp nix-instantiate-executable))
-    (let* ((stderr-file (make-temp-file "nixos-stderr-"))
-           (args (append (list nix-instantiate-executable nil (list t stderr-file) nil)
-                         extra-args
-                         (list "--strict" "--json" "--eval" "-E" expr))))
-      (unwind-protect
-          (with-temp-buffer
-            (let ((exit-code (apply 'call-process args)))
-              (if (zerop exit-code)
-                  (progn
-                    (goto-char (point-min))
-                    (nixos--parse-package-result (json-parse-buffer)))
-                (cons nil (with-temp-buffer
-                            (insert-file-contents stderr-file)
-                            (buffer-string))))))
-        (delete-file stderr-file)))))
+    (condition-case err
+        (let* ((stderr-file (make-temp-file "nixos-stderr-"))
+               (args (append (list nix-instantiate-executable nil (list t stderr-file) nil)
+                             extra-args
+                             (list "--strict" "--json" "--eval" "-E" expr))))
+          (unwind-protect
+              (with-temp-buffer
+                (let ((exit-code (apply 'call-process args)))
+                  (if (zerop exit-code)
+                      (progn
+                        (goto-char (point-min))
+                        (nixos--parse-package-result (json-parse-buffer)))
+                    (cons nil (with-temp-buffer
+                                (insert-file-contents stderr-file)
+                                (buffer-string))))))
+            (delete-file stderr-file)))
+      (file-missing (ignore err) nil))))
 
 (defun nixos--call-nix-url-expr (url)
   "Call nix-instantiate with a tarball URL, return (RESULT . STDERR).
@@ -868,13 +892,21 @@ tarball may change between invocations."
 
 ;;; Thing-At-Point
 
+(defconst nixos--id-chars (string-to-list "-A-Za-z0-9_'\.")
+  "Characters that can appear in a dotted NixOS identifier.
+A list of chars with the hyphen first (so it is literal in both
+`skip-chars-forward' and `rx' char sets).  Shared by
+`nixos--dotted-identifier-re' and `nixos--option-bounds'.")
+
 (defconst nixos--dotted-identifier-re
-  (rx (seq bos
-           (any "A-Z" "a-z" "_")
-           (* (any "A-Z" "a-z" "0-9" "_" "-" "'" "."))
+  (let ((any-chars (append '(any) nixos--id-chars)))
+    (rx-to-string
+     (list 'seq 'bos
+           any-chars
+           (list '* any-chars)
            "."
-           (* (any "A-Z" "a-z" "0-9" "_" "-" "'" ".")))
-      eos)
+           (list '* any-chars)
+           'eos)))
   "Regexp matching a dotted NixOS option or package identifier.
 Must contain at least one dot and match Nix identifier rules.")
 
@@ -891,14 +923,15 @@ identifier like \"services.postgresql.enable\"."
   "Return the bounds of a NixOS option reference around point."
   (when (derived-mode-p 'nix-mode)
     (let* ((p (point))
+           (id-chars (concat nixos--id-chars))
            start end)
       (save-excursion
         ;; Scan backward to the start.
-        (skip-chars-backward "-A-Za-z0-9_'.")
+        (skip-chars-backward id-chars)
         (setq start (point))
         ;; Scan forward to the end.
         (goto-char p)
-        (skip-chars-forward "-A-Za-z0-9_'.")
+        (skip-chars-forward id-chars)
         (setq end (point))
         (when (and (> end start)
                    (string-match-p nixos--dotted-identifier-re

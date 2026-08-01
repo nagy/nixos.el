@@ -201,6 +201,15 @@ converted to strings by stripping the leading colon."
   (should-not nixos--packages-cache)
   (should-not nixos--packages-keys))
 
+(ert-deftest nixos-refresh-cache-keeps-nixpkgs-root ()
+  "`nixos-refresh-cache' keeps `nixos--nixpkgs-root' (immutable)."
+  (setq nixos--nixpkgs-root "/nix/store/nixpkgs-source")
+  (unwind-protect
+      (progn
+        (nixos-refresh-cache)
+        (should (equal nixos--nixpkgs-root "/nix/store/nixpkgs-source")))
+    (setq nixos--nixpkgs-root nil)))
+
 (ert-deftest nixos-ensure-nixpkgs-root ()
   "`nixos--ensure-nixpkgs-root' discovers the nixpkgs root from NIX_PATH."
   (let ((nixos--nixpkgs-root nil))
@@ -218,6 +227,20 @@ converted to strings by stripping the leading colon."
                      (lambda (&rest _) (setq called t) 0)))
             (nixos--ensure-nixpkgs-root)
             (should-not called)))))))
+
+(ert-deftest nixos-ensure-nixpkgs-root-missing-binary ()
+  "`nixos--ensure-nixpkgs-root' stays nil when nix-instantiate is missing."
+  (let ((nixos--nixpkgs-root nil)
+        (nix-instantiate-executable "definitely-not-a-real-binary-xyz"))
+    (should-not (nixos--ensure-nixpkgs-root))))
+
+(ert-deftest nixos-ensure-nixpkgs-root-failed-eval ()
+  "`nixos--ensure-nixpkgs-root' stays nil when nix-instantiate fails."
+  (let ((nixos--nixpkgs-root nil)
+        (nix-instantiate-executable "nix-instantiate"))
+    (cl-letf (((symbol-function 'call-process)
+               (lambda (_program &optional _infile _destination _display &rest _args) 1)))
+      (should-not (nixos--ensure-nixpkgs-root)))))
 
 (ert-deftest nixos-display-option-sets-default-directory ()
   "`nixos--display-option' sets `default-directory' to first declaration."
@@ -820,6 +843,11 @@ converted to strings by stripping the leading colon."
       (should (string-match-p "packages" url-called)))))
 
 ;;; Memoization
+
+(ert-deftest nixos-call-nix-package-expr-missing-binary ()
+  "`nixos--call-nix-package-expr' returns nil when the binary is missing."
+  (let ((nix-instantiate-executable "definitely-not-a-real-binary-xyz"))
+    (should-not (nixos--call-nix-package-expr "{cand}: cand" "--argstr" "cand" "htop"))))
 
 (ert-deftest nixos-package-meta-memoized ()
   "`nixos--package-meta' memoizes per-package and distinguishes keys."

@@ -115,6 +115,12 @@ to skip the eval.
 Nix store paths are immutable, so results never go stale.  Nil results
 are intentionally NOT cached — transient failures retry.
 
+Unavailable nix-instantiate is distinct: `nixos--call-nix-package-expr`
+returns nil (rather than a `(nil . STDERR)` failure cons) when the
+binary is missing.  `call-process` **signals** `file-missing` for a
+missing program rather than returning an exit code, so the call site
+wraps it in `condition-case`.
+
 `nixos--ensure-nixpkgs-root` uses the same permanent-cache pattern:
 the nixpkgs source root is discovered once from `builtins.nixPath`
 via `nix-instantiate` and cached forever (store path never changes).
