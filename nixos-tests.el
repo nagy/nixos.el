@@ -377,7 +377,7 @@ converted to strings by stripping the leading colon."
     (should-error (nixos-package "nonexistent"))))
 
 
-;;; Metadata (Marginalia category)
+;;; Completion metadata
 
 (ert-deftest nixos-metadata-option-category ()
   "Option metadata includes the nixos-option category."
@@ -711,39 +711,6 @@ converted to strings by stripping the leading colon."
   (with-temp-buffer
     (nixos-eldoc-setup)
     (should (memq #'nixos-eldoc-function eldoc-documentation-functions))))
-
-
-;;; Marginalia annotators
-
-(ert-deftest nixos-marginalia-option-annotator ()
-  "Option annotator shows type and description."
-  (nixos-test--with-options
-      (nixos-test--options-hash
-       '("services.foo.enable" :type "boolean" :description "Enable foo"))
-    (let ((ann (nixos--marginalia-option-annotator "services.foo.enable")))
-      (should (stringp ann))
-      (should (string-match-p "boolean" ann))
-      (should (string-match-p "Enable foo" ann)))))
-
-(ert-deftest nixos-marginalia-option-annotator-no-type ()
-  "Option annotator still shows the description when type is absent."
-  (nixos-test--with-options
-      (nixos-test--options-hash
-       '("services.foo.enable" :description "Enable foo"))
-    (let ((ann (nixos--marginalia-option-annotator "services.foo.enable")))
-      (should (stringp ann))
-      (should (string-match-p "Enable foo" ann)))))
-
-(ert-deftest nixos-marginalia-package-annotator ()
-  "Package annotator shows version and description."
-  (nixos-test--with-packages
-      (nixos-test--packages-hash
-       '("legacyPackages.x86_64-linux.htop"
-         :pname "htop" :version "3.3.0" :description "Interactive process viewer"))
-    (let ((ann (nixos--marginalia-package-annotator "htop")))
-      (should (stringp ann))
-      (should (string-match-p "3.3.0" ann))
-      (should (string-match-p "process viewer" ann)))))
 
 
 ;;; Package browse mode

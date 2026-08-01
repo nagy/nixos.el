@@ -36,7 +36,7 @@ fails the build.
 9. Interactive commands (`nixos-package` / `nixos-package-local` /
    `nixos-package-url`, `nixos-option`)
 10. Thing-At-Point, Tabulated Browse Mode (shared macro), Eldoc
-11. Marginalia annotators, Package Browse Mode, Embark export + actions
+11. Completion metadata, Package Browse Mode, Embark export + actions
 
 ### ol-nixos.el (Org link types, ~130 lines)
 
@@ -54,7 +54,7 @@ nixos.el does not know it exists.
 
 ### Byte-compiler silencing
 
-External vars from optional deps (marginalia, embark) are declared
+External vars from optional deps (embark) are declared
 with **value-less** `(defvar <var>)`.  A top-level value-less defvar
 marks the symbol special for the whole file, which silences
 "reference to free variable" warnings.  All actual accesses happen
@@ -64,16 +64,15 @@ variable, so nothing is ever void at runtime.
 Never give these defvars a value:
 
 ```elisp
-(defvar marginalia-annotator-registry)      ;; correct
-(defvar marginalia-annotator-registry nil)  ;; WRONG — see below
+(defvar embark-general-map)               ;; correct
+(defvar embark-general-map nil)           ;; WRONG — see below
 ```
 
 `defcustom` does not override an already-bound variable — that is
 the mechanism that lets users `setq` a variable before loading its
 package.  So a `(defvar <var> nil)` in nixos.el would, whenever
-nixos.el loads *before* marginalia/embark, silently replace their
-defcustom defaults with nil (e.g. wiping marginalia's entire default
-annotator registry).
+nixos.el loads *before* embark, silently replace its defcustom
+defaults with nil.
 
 Corollary for keymaps: `defvar-keymap :parent` is evaluated once, at
 definition time, when `embark-general-map` may not exist yet.  The
@@ -372,7 +371,7 @@ should be pure where possible — makes them testable without mocking.
 | Emacs 30.1 | yes | `json-parse-buffer`, `defvar-keymap`, `with-memoization` |
 | nix-mode | soft | `nix-instantiate-executable` for package metadata |
 | org-mode | soft | `ol-nixos.el` Org link types (opt-in `(require 'ol-nixos)`) |
-| marginalia | soft | annotator registry |
+| embark | soft | export + actions |
 | embark | soft | export + actions |
 
 ### Faces

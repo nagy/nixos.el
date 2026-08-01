@@ -44,7 +44,7 @@
 ;;
 ;; Both commands use the standard completion framework, so they work
 ;; with icomplete, vertico, fido-mode, etc.  Annotation support is
-;; provided out of the box (marginalia is fine too).
+;; provided out of the box.
 ;;
 ;; Deep integration:
 ;;
@@ -60,7 +60,7 @@
 ;;     (thing-at-point 'nixos-option).  Call (nixos-thing-at-point-setup)
 ;;     from `nix-mode-hook' to enable.
 ;;
-;;   - Completion metadata includes `category' for Marginalia users.
+;;   - Completion metadata includes `category' for Embark actions.
 ;;
 ;; Usage:
 ;;
@@ -154,9 +154,8 @@ Inherits from `package-description' when available."
   :group 'nixos)
 
 (defface nixos-version
-  '((t :inherit (marginalia-version shadow)))
-  "Face for package versions in nixos detail and table buffers.
-Inherits from `marginalia-version' when available."
+  '((t :inherit (shadow)))
+  "Face for package versions in nixos detail and table buffers."
   :group 'nixos)
 
 
@@ -1130,48 +1129,6 @@ Add this alongside `nixos-thing-at-point-setup' in
   (add-hook \='nix-mode-hook #\='nixos-eldoc-setup)"
   (add-hook 'eldoc-documentation-functions
             #'nixos-eldoc-function nil t))
-
-
-;;; Marginalia annotators
-
-(defun nixos--marginalia-option-annotator (cand)
-  "Marginalia annotator for `nixos-option' completion candidates.
-Shows the option type (when present) and the description."
-  (when-let* ((data (gethash cand (nixos--options-load))))
-    (let ((type (gethash "type" data))
-          (desc (nixos--slurp-description data)))
-      (when (or type (not (string-empty-p desc)))
-        (concat (when type
-                  (concat (propertize (concat "(" type ")")
-                                      'face 'marginalia-type)
-                          " "))
-                desc)))))
-
-(defun nixos--marginalia-package-annotator (cand)
-  "Marginalia annotator for `nixos-package' completion candidates.
-Shows the package version and description."
-  (let* ((full-key (concat "legacyPackages.x86_64-linux." cand))
-         (data (gethash full-key (nixos--packages-load)))
-         (version (and data (gethash "version" data)))
-         (desc (and data (nixos--slurp-description data))))
-    (when (or version desc)
-      (concat (when version
-                (concat (propertize (concat "(" version ")")
-                                    'face 'marginalia-version)
-                        " "))
-              (or desc "")))))
-
-;; Value-less defvar: silences the byte-compiler without binding the
-;; variable.  Giving it a value here would prevent marginalia's own
-;; `defcustom' default from taking effect when nixos.el loads first
-;; (`defcustom' never overrides an already-bound variable).
-(defvar marginalia-annotator-registry)
-
-(with-eval-after-load 'marginalia
-  (add-to-list 'marginalia-annotator-registry
-               '(nixos-option nixos--marginalia-option-annotator builtin none))
-  (add-to-list 'marginalia-annotator-registry
-               '(nixos-package nixos--marginalia-package-annotator builtin none)))
 
 
 ;;; Package Browse Mode

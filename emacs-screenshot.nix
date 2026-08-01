@@ -26,7 +26,8 @@ rec {
           (emacs.pkgs.withPackages (e: [
             e.magit-section
             e.modus-themes
-            e.marginalia
+            e.magit-section
+            e.modus-themes
             nixosEl
           ]))
           pkgs.xvfb-run
@@ -73,7 +74,7 @@ rec {
       inherit light;
       emacsCode = ''
         (require 'dired)        ; for dired-directory face on store path
-        (require 'marginalia)   ; for marginalia-version face on version
+        (require 'dired)        ; for dired-directory face on store path
         (require 'nix-mode)
         (require 'nixos)
         (add-to-list 'display-buffer-alist
