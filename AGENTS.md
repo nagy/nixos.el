@@ -369,9 +369,8 @@ should be pure where possible — makes them testable without mocking.
 | Dependency | Required? | Why |
 |-----------|-----------|-----|
 | Emacs 30.1 | yes | `json-parse-buffer`, `defvar-keymap`, `with-memoization` |
-| nix-mode | soft | `nix-instantiate-executable` for package metadata |
+| nix-mode | install: hard (Package-Requires); runtime: soft (guarded) | `nix-instantiate-executable` for package metadata; the value-less `defvar` makes the nix paths inert until nix-mode (or the user) sets the executable |
 | org-mode | soft | `ol-nixos.el` Org link types (opt-in `(require 'ol-nixos)`) |
-| embark | soft | export + actions |
 | embark | soft | export + actions |
 
 ### Faces

@@ -281,6 +281,29 @@ converted to strings by stripping the leading colon."
       (should (= (hash-table-count result) 0))
       (should (null nixos--packages-keys)))))
 
+(ert-deftest nixos-packages-load-sorted-keys ()
+  "`nixos--packages-load' produces sorted `nixos--packages-keys'."
+  (setq nixos--packages-cache nil)
+  (let ((json (concat "{\"legacyPackages.x86_64-linux.neovim\": {},"
+                       "\"legacyPackages.x86_64-linux.htop\": {},"
+                       "\"legacyPackages.x86_64-linux.ahash\": {}}"))
+        (nixos-search-json-file (make-temp-file "search-")))
+    (unwind-protect
+        (progn
+          (write-region json nil nixos-search-json-file)
+          (nixos--packages-load)
+          (should (equal nixos--packages-keys
+                         (sort (list "ahash" "htop" "neovim") #'string<))))
+      (delete-file nixos-search-json-file))))
+
+(ert-deftest nixos-browse-commands-autoloaded ()
+  "The browse-table commands carry top-level autoload forms."
+  (let ((source (with-temp-buffer
+                  (insert-file-contents (expand-file-name "nixos.el"))
+                  (buffer-string))))
+    (should (string-match-p "(autoload 'nixos-browse-options \"nixos\"" source))
+    (should (string-match-p "(autoload 'nixos-browse-packages \"nixos\"" source))))
+
 
 ;;; Non-interactive commands
 

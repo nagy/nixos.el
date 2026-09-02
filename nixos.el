@@ -210,10 +210,11 @@ Returns the cached hash table."
                        (json-parse-buffer))))
           (setq nixos--packages-cache table
                 nixos--packages-keys
-                (mapcar (lambda (k)
-                          (string-remove-prefix
-                           "legacyPackages.x86_64-linux." k))
-                        (hash-table-keys table))))
+                (sort (mapcar (lambda (k)
+                                (string-remove-prefix
+                                 "legacyPackages.x86_64-linux." k))
+                              (hash-table-keys table))
+                      #'string<)))
       (setq nixos--packages-cache (make-hash-table :test 'equal)
             nixos--packages-keys nil)))
   nixos--packages-cache)
@@ -379,9 +380,6 @@ ACTION."
 (defvar-local nixos--browse-out-path nil
   "Store path of the package in the current browse buffer, if any.")
 
-(defvar-local nixos--browse-homepage nil
-  "Homepage URL of the package in the current browse buffer, if any.")
-
 (defvar-local nixos--browse-source nil
   "Where the package in the current browse buffer came from.
 nil for a nixpkgs package (or an option); (local . DIR) for a
@@ -397,7 +395,6 @@ package origin as understood by `nixos--browse-source'."
   (setq nixos--browse-type type
         nixos--browse-name name
         nixos--browse-out-path out-path
-        nixos--browse-homepage nil
         nixos--browse-source source))
 
 (defun nixos-browse-show-requisites ()
@@ -573,7 +570,6 @@ installed Nix package."
                         'nixos-version)
           (let ((hp (gethash "homepage" meta-data)))
             (when (and hp (not (eq hp :null)))
-              (setq nixos--browse-homepage hp)
               (nixos--link "Homepage:" hp)))
           (let ((repo (alist-get 'repository info)))
             (when (and repo (stringp repo) (not (string-empty-p repo)))
@@ -611,7 +607,6 @@ installed Nix package."
               (when (and deps (vectorp deps) (> (length deps) 0))
                 (insert "\n" (propertize (cdr dep-type) 'face 'nixos-field-label) "\n")
                 (dolist (dep (append deps nil))
-                  (insert "  ")
                   (let ((dep-name (gethash "name" dep))
                         (dep-store (gethash "storePath" dep)))
                     (if dep-name
@@ -1147,6 +1142,13 @@ Add this alongside `nixos-thing-at-point-setup' in
   :url-fmt nixos-package-search-url-template
   :cache-fn nixos--packages-load
   :key-fn (lambda (k) (string-remove-prefix "legacyPackages.x86_64-linux." k)))
+
+;; The browse-table commands are defined inside the macro above; the
+;; ;;;###autoload cookie sits indented in the macro body so the
+;; loaddefs scraper never sees it.  Emit explicit autoloads so the
+;; commands are available before the package loads.
+(autoload 'nixos-browse-options "nixos" nil t)
+(autoload 'nixos-browse-packages "nixos" nil t)
 
 
 ;;; Embark
