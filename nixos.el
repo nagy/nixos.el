@@ -175,6 +175,12 @@ keys like pname, version, description, etc.")
 (defvar nixos--packages-keys nil
   "Cached list of short package names (prefix stripped).")
 
+(defvar nixos--package-key-prefix nil
+  "The system attribute prefix of the loaded nix search JSON.
+E.g. \"legacyPackages.x86_64-linux.\".  Derived from the first key of
+`nixos-search-json-file' in `nixos--packages-load', so the package is
+correct on every Nix platform.  Nil until the package data is loaded.")
+
 (defvar nixos--package-meta-cache nil
   "Hash table memoizing `nixos--package-meta' results.
 Keys are package names, values are alists with keys `meta',
@@ -208,15 +214,29 @@ Returns the cached hash table."
                        (insert-file-contents nixos-search-json-file)
                        (goto-char (point-min))
                        (json-parse-buffer))))
-          (setq nixos--packages-cache table
-                nixos--packages-keys
-                (sort (mapcar (lambda (k)
-                                (string-remove-prefix
-                                 "legacyPackages.x86_64-linux." k))
-                              (hash-table-keys table))
-                      #'string<)))
+          (let* ((keys (hash-table-keys table))
+                 ;; Derive the system prefix from the first key, so the
+                 ;; package is correct on every Nix platform and other
+                 ;; systems' keys get stripped rather than leaking.
+                 (prefix (if keys
+                             (string-match
+                              "\\`legacyPackages\\.\\([a-z0-9_-]+\\)\\."
+                              (car keys))
+                           nil)))
+            (setq nixos--package-key-prefix
+                  (if prefix
+                      (substring (car keys) 0 (match-end 0))
+                    ""))
+            (setq nixos--packages-cache table
+                  nixos--packages-keys
+                  (sort (mapcar (lambda (k)
+                                  (string-remove-prefix
+                                   nixos--package-key-prefix k))
+                                keys)
+                        #'string<))))
       (setq nixos--packages-cache (make-hash-table :test 'equal)
-            nixos--packages-keys nil)))
+            nixos--packages-keys nil
+            nixos--package-key-prefix "")))
   nixos--packages-cache)
 
 (defun nixos-refresh-cache ()
@@ -232,6 +252,7 @@ would be wasted work (see `nixos--ensure-nixpkgs-root')."
   (setq nixos--options-cache nil
         nixos--packages-cache nil
         nixos--packages-keys nil
+        nixos--package-key-prefix nil
         nixos--package-meta-cache nil)
   (message "nixos: cache cleared"))
 
@@ -333,7 +354,7 @@ ACTION."
 
 (defun nixos--package-annotate (candidate)
   "Completion annotation function for Nix package CANDIDATE."
-  (let ((full-key (concat "legacyPackages.x86_64-linux." candidate)))
+  (let ((full-key (concat nixos--package-key-prefix candidate)))
     (nixos--annotate
      (nixos--slurp-description
       (gethash full-key (nixos--packages-load))))))
@@ -828,7 +849,7 @@ contents of `nixos-search-json-file' are shown."
       (if info
           (nixos--display-package cand info)
         ;; Fall back to the search JSON data.
-        (let* ((full-key (concat "legacyPackages.x86_64-linux." cand))
+        (let* ((full-key (concat nixos--package-key-prefix cand))
                (data (gethash full-key (nixos--packages-load))))
           (if data
               (nixos--display-package
@@ -1141,7 +1162,7 @@ Add this alongside `nixos-thing-at-point-setup' in
   :visit-fn nixos-package
   :url-fmt nixos-package-search-url-template
   :cache-fn nixos--packages-load
-  :key-fn (lambda (k) (string-remove-prefix "legacyPackages.x86_64-linux." k)))
+  :key-fn (lambda (k) (string-remove-prefix nixos--package-key-prefix k)))
 
 ;; The browse-table commands are defined inside the macro above; the
 ;; ;;;###autoload cookie sits indented in the macro body so the

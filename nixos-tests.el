@@ -59,6 +59,7 @@ converted to strings by stripping the leading colon."
 `nixos--packages-keys' bound from PACKAGES."
   (declare (indent 1))
   `(let* ((nixos--packages-cache ,packages)
+          (nixos--package-key-prefix "legacyPackages.x86_64-linux.")
           (nixos--packages-keys
            (sort (mapcar (lambda (k)
                            (string-remove-prefix
@@ -294,6 +295,20 @@ converted to strings by stripping the leading colon."
           (nixos--packages-load)
           (should (equal nixos--packages-keys
                          (sort (list "ahash" "htop" "neovim") #'string<))))
+      (delete-file nixos-search-json-file))))
+
+(ert-deftest nixos-packages-load-derives-prefix ()
+  "`nixos--packages-load' derives the system prefix from the data."
+  (setq nixos--packages-cache nil nixos--package-key-prefix nil)
+  (let ((json "{\"legacyPackages.aarch64-linux.htop\": {}, \"legacyPackages.aarch64-linux.neovim\": {}}")
+        (nixos-search-json-file (make-temp-file "search-")))
+    (unwind-protect
+        (progn
+          (write-region json nil nixos-search-json-file)
+          (nixos--packages-load)
+          (should (equal nixos--package-key-prefix
+                         "legacyPackages.aarch64-linux."))
+          (should (equal nixos--packages-keys '("htop" "neovim"))))
       (delete-file nixos-search-json-file))))
 
 (ert-deftest nixos-browse-commands-autoloaded ()
@@ -993,6 +1008,75 @@ converted to strings by stripping the leading colon."
         (nixos-browse-refresh)
         (should (equal refreshed "https://example.com/pkg.tar.gz")))
       (kill-buffer browse-buf))))
+
+(ert-deftest nixos-browse-refresh-local ()
+  "`nixos-browse-refresh' dispatches local-source packages to `nixos-package-local'."
+  (let ((browse-buf nil)
+        (refreshed nil)
+        (meta-ht (make-hash-table :test 'equal))
+        (proj-dir (make-temp-file "nixos-local-" t)))
+    (puthash "description" "local pkg" meta-ht)
+    (unwind-protect
+        (progn
+          (write-region "{ pkgs ? import <nixpkgs> {} }: pkgs.hello" nil
+                        (expand-file-name "default.nix" proj-dir))
+          (cl-letf (((symbol-function 'pop-to-buffer)
+                     (lambda (buf) (setq browse-buf buf) (set-buffer buf)))
+                    ((symbol-function 'nixos--call-nix-package-expr)
+                     (lambda (_expr &rest _args)
+                       (cons (list (cons 'meta meta-ht)
+                                   (cons 'outPath "/nix/store/local"))
+                             ""))))
+            (let ((default-directory proj-dir))
+              (nixos-package-local))
+            (should (equal nixos--browse-source
+                           (cons 'local proj-dir)))
+            (cl-letf (((symbol-function 'nixos-package-local)
+                       (lambda () (setq refreshed t))))
+              (nixos-browse-refresh)
+              (should (eq refreshed t)))
+            (kill-buffer browse-buf)))
+      (delete-directory proj-dir t))))
+
+(ert-deftest nixos-value-to-string ()
+  "`nixos--value-to-string' converts JSON values to strings."
+  (should (null (nixos--value-to-string :null)))
+  (should (equal (nixos--value-to-string "hi") "hi"))
+  (should (equal (nixos--value-to-string 42) "42"))
+  (should (equal (nixos--value-to-string 3.5) "3.5"))
+  (should (equal (nixos--value-to-string t) "true"))
+  (should (equal (nixos--value-to-string :json-false) "false"))
+  (should (equal (nixos--value-to-string (make-hash-table :test 'equal)) "{}"))
+  (should (equal (nixos--value-to-string 'sym) "sym")))
+
+(ert-deftest nixos-display-package-deps ()
+  "`nixos--display-package' renders buildInputs/nativeBuildInputs with store paths."
+  (let ((meta (make-hash-table :test 'equal))
+        (browse-buf nil))
+    (puthash "name" "htop" meta)
+    (puthash "version" "3.0" meta)
+    (puthash "description" "process viewer" meta)
+    (let ((info (list (cons 'meta meta)
+                      (cons 'outPath "/nix/store/htop")
+                      (cons 'buildInputs
+                            (vector (let ((h (make-hash-table :test 'equal)))
+                                      (puthash "name" "ncurses" h)
+                                      (puthash "storePath" "/nix/store/ncurses" h)
+                                      h)))
+                      (cons 'nativeBuildInputs
+                            (vector (let ((h (make-hash-table :test 'equal)))
+                                      (puthash "name" "python3" h)
+                                      (puthash "storePath" "/nix/store/python3" h)
+                                      h))))))
+      (cl-letf (((symbol-function 'pop-to-buffer)
+                 (lambda (buf) (setq browse-buf buf) (set-buffer buf))))
+        (nixos--display-package "htop" info)
+        (with-current-buffer browse-buf
+          (should (string-match-p "ncurses" (buffer-string)))
+          (should (string-match-p "/nix/store/ncurses" (buffer-string)))
+          (should (string-match-p "python3" (buffer-string)))
+          (should (string-match-p "/nix/store/python3" (buffer-string))))
+        (kill-buffer browse-buf)))))
 
 (ert-deftest nixos-bookmark-url ()
   "Bookmark records for URL packages include the URL state."
