@@ -29,6 +29,7 @@
 (require 'cl-lib)
 
 (defvar nix-instantiate-executable)
+(defvar nix-executable)
 (declare-function nix-mode "nix-mode")
 
 
@@ -1322,6 +1323,177 @@ converted to strings by stripping the leading colon."
         (should-not called-names)
         (should-not called-prefix)))))
 
+
+
+;;; Flake support
+
+(ert-deftest nixos-flake-leaf-p ()
+  "`nixos--flake-leaf-p' identifies leaves carrying a type key."
+  (let ((leaf (make-hash-table :test 'equal))
+        (group (make-hash-table :test 'equal)))
+    (puthash "type" "derivation" leaf)
+    (puthash "packages" (make-hash-table :test 'equal) group)
+    (should (nixos--flake-leaf-p leaf))
+    (should-not (nixos--flake-leaf-p group))
+    (should-not (nixos--flake-leaf-p nil))
+    (should-not (nixos--flake-leaf-p "string"))))
+
+(ert-deftest nixos-flake-flatten ()
+  "`nixos--flake-flatten' walks nested attrsets to path-keyed leaves."
+  (let* ((hello (make-hash-table :test 'equal))
+         (pkg (make-hash-table :test 'equal))
+         (sys (make-hash-table :test 'equal))
+         (foo (make-hash-table :test 'equal))
+         (apps-sys (make-hash-table :test 'equal))
+         (apps (make-hash-table :test 'equal))
+         (machine (make-hash-table :test 'equal))
+         (nixos (make-hash-table :test 'equal))
+         (minimal (make-hash-table :test 'equal))
+         (templates (make-hash-table :test 'equal))
+         (json (make-hash-table :test 'equal)))
+    (puthash "type" "derivation" hello)
+    (puthash "name" "hello-2.12" hello)
+    (puthash "description" "greeting" hello)
+    (puthash "hello" hello pkg)
+    (puthash "x86_64-linux" pkg sys)
+    (puthash "packages" sys json)
+    (puthash "type" "app" foo)
+    (puthash "foo" foo apps-sys)
+    (puthash "x86_64-linux" apps-sys apps)
+    (puthash "apps" apps json)
+    (puthash "type" "nixos-configuration" machine)
+    (puthash "machine" machine nixos)
+    (puthash "nixosConfigurations" nixos json)
+    (puthash "type" "template" minimal)
+    (puthash "description" "minimal" minimal)
+    (puthash "minimal" minimal templates)
+    (puthash "templates" templates json)
+    (let ((table (nixos--flake-flatten json)))
+      (should (hash-table-p table))
+      (should (gethash "packages.x86_64-linux.hello" table))
+      (should (gethash "apps.x86_64-linux.foo" table))
+      (should (gethash "nixosConfigurations.machine" table))
+      (should (gethash "templates.minimal" table))
+      (let ((leaf (gethash "packages.x86_64-linux.hello" table)))
+        (should (equal (gethash "type" leaf) "derivation")))
+      ;; Non-leaf grouping nodes are not leaves.
+      (should-not (gethash "packages" table))
+      (should-not (gethash "packages.x86_64-linux" table)))))
+
+(ert-deftest nixos-flake-display ()
+  "`nixos--display-flake' renders type, path, name, description, flake ref."
+  (let* ((data (make-hash-table :test 'equal))
+         (displayed nil))
+    (puthash "type" "derivation" data)
+    (puthash "name" "hello-2.12" data)
+    (puthash "description" "A greeting program" data)
+    (cl-letf (((symbol-function 'pop-to-buffer)
+               (lambda (buf) (setq displayed buf) (set-buffer buf))))
+      (nixos--display-flake "packages.x86_64-linux.hello" data ".")
+      (should displayed)
+      (should (buffer-live-p displayed))
+      (with-current-buffer displayed
+        (let ((content (buffer-string)))
+          (should (string-match-p "Type:" content))
+          (should (string-match-p "derivation" content))
+          (should (string-match-p "Path:" content))
+          (should (string-match-p "packages.x86_64-linux.hello" content))
+          (should (string-match-p "Name:" content))
+          (should (string-match-p "hello-2.12" content))
+          (should (string-match-p "A greeting program" content))
+          (should (string-match-p "Flake:" content))
+          ;; Browse metadata is set.
+          (should (eq nixos--browse-type 'flake))
+          (should (equal nixos--browse-name
+                         "packages.x86_64-linux.hello"))
+          (should (equal nixos--browse-flake-ref ".")))
+        (kill-buffer displayed))))
+
+(ert-deftest nixos-flake-call-missing-binary ()
+  "`nixos--call-flake-show' returns nil when the `nix' binary is missing."
+  (let ((nix-executable "definitely-not-a-real-binary-xyz"))
+    (should-not (nixos--call-flake-show "."))))
+
+(ert-deftest nixos-flake-call-success ()
+  "`nixos--call-flake-show' parses a successful flake show JSON."
+  (let ((nix-executable "nix"))
+    (cl-letf (((symbol-function 'call-process)
+               (lambda (_program &optional _infile destination _display &rest _args)
+                 (when (eq destination t)
+                   (insert "{\"packages\":{\"x86_64-linux\":{\"hello\":{\"type\":\"derivation\"}}}}"))
+                 0)))
+      (let ((result (nixos--call-flake-show ".")))
+        (should (consp result))
+        (should (car result))
+        (let ((json (car result)))
+          (should (hash-table-p json))
+          (should (gethash "packages" json)))))))
+
+(ert-deftest nixos-flake-call-failure ()
+  "`nixos--call-flake-show' returns (nil . STDERR) on failure."
+  (let ((nix-executable "nix"))
+    (cl-letf (((symbol-function 'call-process)
+               (lambda (_program &optional _infile _destination _display &rest _args)
+                 1)))
+      (let ((result (nixos--call-flake-show ".")))
+        (should (consp result))
+        (should-not (car result))
+        (should (stringp (cdr result)))))))
+
+(ert-deftest nixos-flake-browse-table-bookmark ()
+  "Table bookmark record for flakes includes the flake type."
+  (with-temp-buffer
+    (nixos-browse-flakes-mode)
+    (setq-local nixos--browse-name-prefix ".")
+    (let ((rec (nixos--browse-table-bookmark-make-record)))
+      (should (stringp (car rec)))
+      (should (string-match-p "flake" (car rec)))
+      (should (eq (alist-get 'type rec) 'flake))
+      (should (equal (alist-get 'name-prefix rec) "."))
+      (should (eq (alist-get 'handler rec) 'nixos--bookmark-jump)))))
+
+(ert-deftest nixos-bookmark-jump-table-flake ()
+  "`nixos--bookmark-jump' calls `nixos-flake' for flake table bookmarks."
+  (let ((called-ref :sentinel))
+    (cl-letf (((symbol-function 'switch-to-buffer)
+               (lambda (buf) (set-buffer buf)))
+              ((symbol-function 'nixos-flake)
+               (lambda (ref) (setq called-ref ref))))
+      (nixos--bookmark-jump '((type . flake)
+                              (name-prefix . ".")))
+      (should (equal called-ref ".")))))
+
+(ert-deftest nixos-bookmark-jump-detail-flake ()
+  "`nixos--bookmark-jump' detail flake re-displays the cached node."
+  (let* ((data (make-hash-table :test 'equal))
+         (nixos--flake-cache (let ((tbl (make-hash-table :test 'equal)))
+                               (puthash "apps.x86_64-linux.foo" data tbl)
+                               tbl))
+         (displayed nil))
+    (puthash "type" "app" data)
+    (cl-letf (((symbol-function 'pop-to-buffer)
+               (lambda (buf) (setq displayed buf) (set-buffer buf))))
+      (nixos--bookmark-jump '((type . flake)
+                              (name . "apps.x86_64-linux.foo")
+                              (source . "myflakedir")))
+      (should displayed)
+      (with-current-buffer displayed
+        (should (string-match-p "apps.x86_64-linux.foo" (buffer-string))))
+      (kill-buffer displayed))))
+
+;;; Flake browse-mode entry
+
+(ert-deftest nixos-browse-flakes-entry ()
+  "`nixos-browse-flakes--entry' returns a proper tabulated-list entry."
+  (let ((data (make-hash-table :test 'equal)))
+    (puthash "type" "derivation" data)
+    (puthash "description" "A greeting program" data)
+    (let ((entry (nixos-browse-flakes--entry "packages.x86_64-linux.hello" data)))
+      (should (equal (car entry) "packages.x86_64-linux.hello"))
+      (let ((cols (cadr entry)))
+        (should (equal (aref cols 0) "packages.x86_64-linux.hello"))
+        (should (equal (aref cols 1) "derivation"))
+        (should (equal (aref cols 2) "A greeting program")))))))
 
 (provide 'nixos-tests)
 ;;; nixos-tests.el ends here

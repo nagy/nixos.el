@@ -3,10 +3,10 @@
 ## Overview
 
 Emacs package providing interactive `completing-read` and
-`tabulated-list-mode` interfaces for browsing NixOS options and
-Nix packages.  Two source files: `nixos.el` (core) and `ol-nixos.el`
-(Org link types).  Built via `default.nix` (melpaBuild, AGPL3+).
-Tests in `nixos-tests.el`.
+`tabulated-list-mode` interfaces for browsing NixOS options, Nix
+packages and Nix flake outputs.  Two source files: `nixos.el` (core)
+and `ol-nixos.el` (Org link types).  Built via `default.nix`
+(melpaBuild, AGPL3+).  Tests in `nixos-tests.el`.
 
 ## Build & test
 
@@ -20,23 +20,25 @@ fails the build.
 
 ## Architecture
 
-### nixos.el (core, ~1200 lines)
+### nixos.el (core, ~1350 lines)
 
 1. Faces (`nixos-package-name`, `nixos-field-label`, `nixos-description`)
 2. defgroup / defcustom (6 options incl. URL templates for search.nixos.org)
 3. Cache (hash-table vars, load functions, `nixos--ensure-nixpkgs-root`,
-   `nixos-refresh-cache`)
+   `nixos-refresh-cache`, plus `nixos--flake-cache`/`nixos--flake-ref`)
 4. Helpers (`nixos--slurp-description`, `nixos--search-names`,
    `nixos--package-expr-tail`, `nixos--parse-package-result`,
-   `nixos--call-nix-package-expr`, `nixos--call-nix-url-expr`)
-5. Options / Packages collection + annotation
+   `nixos--call-nix-package-expr`, `nixos--call-nix-url-expr`,
+   `nixos--flake-flatten`, `nixos--call-flake-show`)
+5. Options / Packages / Flakes collection + annotation
 6. Browse Major Mode (`nixos-browse-mode`)
-7. Display helpers (`nixos--display-option`, `nixos--display-package`)
+7. Display helpers (`nixos--display-option`, `nixos--display-package`,
+   `nixos--display-flake`)
 8. Bookmarks (detail + table)
 9. Interactive commands (`nixos-package` / `nixos-package-local` /
-   `nixos-package-url`, `nixos-option`)
+   `nixos-package-url`, `nixos-option`, `nixos-flake`)
 10. Thing-At-Point, Tabulated Browse Mode (shared macro), Eldoc
-11. Completion metadata, Package Browse Mode, Embark export + actions
+11. Completion metadata, Package + Flake Browse Modes, Embark export + actions
 
 ### ol-nixos.el (Org link types, ~130 lines)
 
@@ -278,6 +280,41 @@ table bookmarks and the `nixos-*-search:` Org link types.
 via `assq` (table), then falling through to the detail handler,
 which dispatches on the `source` field with `pcase`.
 
+### Flake browsing (`nixos-flake`)
+
+`nixos-flake` runs `nix flake show --json` for a ref (default: the
+buffer's `default-directory`) and flattens it into a path-keyed
+hash table for a `nixos-browse-flakes-mode` table.
+
+- **`nixos--flake-flatten`** recursively walks the parsed JSON,
+  building a full dotted path per leaf.  A node is a leaf iff it
+  carries a `"type"` key (matching what `flake show --json` emits);
+  grouping attrsets — the system level and empty `legacyPackages`
+  subtrees — are descended into, not shown.  Notably the system
+  level is **optional**: `packages`/`apps`/`checks`/`devShells`/
+  `formatter`/`legacyPackages` nest under a system attribute, while
+  `nixosConfigurations` and `templates` do not.  `flake-flatten`
+  handles both because it recurses on any non-leaf attrset.
+- **`nixos--call-flake-show`** shells out to `nix` (the
+  `nix-executable` variable, provided by nix-mode's `nix.el`) with
+  `--extra-experimental-features nix-command flakes` before
+  `flake show --json`.  This is separate from
+  `nix-instantiate-executable`, which drives only package metadata.
+  Uses the same temp-file stderr capture + `condition-case`
+  `file-missing` pattern as `nixos--call-nix-package-expr`.
+- **No web view.**  `search.nixos.org` does not index flake nodes, so
+  the browse-table macro's `b` search-url binding is disabled for the
+  flake mode (omit `:url-fmt`) and `nixos-browse-search-url` errors
+  on `nixos--browse-type` of `flake`.
+- **Detail buffer** (`nixos--display-flake`) shows only what
+  `flake show --json` emits: Type, Path, Name, Description, Flake ref.
+  There is no store path, so `r` (requisites) and `w` (copy-store-path)
+  error naturally (the `nixos--browse-out-path` stays nil).
+- The `nixos--browse-source` enum is **not** extended for flakes.
+  Flakes use the separate buffer-local `nixos--browse-flake-ref`
+  instead; refresh and detail/bookmark dispatch on `flake` via the
+  cached `nixos--flake-cache` (or a fresh `flake show` if evicted).
+
 ### Test conventions
 
 - The test file is byte-compiled in `checkPhase` with
@@ -370,6 +407,7 @@ should be pure where possible — makes them testable without mocking.
 |-----------|-----------|-----|
 | Emacs 30.1 | yes | `json-parse-buffer`, `defvar-keymap`, `with-memoization` |
 | nix-mode | install: hard (Package-Requires); runtime: soft (guarded) | `nix-instantiate-executable` for package metadata; the value-less `defvar` makes the nix paths inert until nix-mode (or the user) sets the executable |
+| nix (CLI) | soft (guarded) | `nix-executable` (from nix-mode) for `nix flake show --json`; `nixos--call-flake-show` guards on `boundp` + `stringp` |
 | org-mode | soft | `ol-nixos.el` Org link types (opt-in `(require 'ol-nixos)`) |
 | embark | soft | export + actions |
 

@@ -80,6 +80,7 @@
 
 ;; Forward-declare; nix-mode is optional at compile time.
 (defvar nix-instantiate-executable)
+(defvar nix-executable)
 
 (defgroup nixos nil
   "Browse NixOS options and packages."
@@ -193,6 +194,15 @@ for a given package name never changes.")
 Set by `nixos--ensure-nixpkgs-root' via nix-instantiate.
 Since store paths are immutable, this cache never expires.")
 
+(defvar nixos--flake-cache nil
+  "Cached hash table of flake leaves from `nixos-flake'.
+Keys are full dotted output paths (e.g.
+\"packages.x86_64-linux.hello\"); values are the leaf hash tables
+from `nix flake show --json'.")
+
+(defvar nixos--flake-ref nil
+  "The flake reference currently loaded into `nixos--flake-cache'.")
+
 (defun nixos--options-load ()
   "Load NixOS options from `nixos-options-json-file' into cache.
 Returns the cached hash table."
@@ -253,7 +263,9 @@ would be wasted work (see `nixos--ensure-nixpkgs-root')."
         nixos--packages-cache nil
         nixos--packages-keys nil
         nixos--package-key-prefix nil
-        nixos--package-meta-cache nil)
+        nixos--package-meta-cache nil
+        nixos--flake-cache nil
+        nixos--flake-ref nil)
   (message "nixos: cache cleared"))
 
 (defun nixos--ensure-nixpkgs-root ()
@@ -409,6 +421,10 @@ package evaluated from a tarball at URL.  Used by
 `nixos-browse-refresh' and bookmarks to re-evaluate the same
 source.")
 
+(defvar-local nixos--browse-flake-ref nil
+  "The flake reference for the node in the current browse buffer.
+Used by `nixos-browse-refresh' and bookmarks to re-run\n`nix flake show' for the same flake.")
+
 (defun nixos--browse-setup (type name &optional out-path source)
   "Configure the current buffer for browsing TYPE (option or package) NAME.
 OUT-PATH is the package store path, if any.  SOURCE is the
@@ -459,6 +475,8 @@ This shows requisites, references, derivers, etc."
 (defun nixos-browse-search-url ()
   "Open the current option or package on search.nixos.org."
   (interactive)
+  (when (eq nixos--browse-type 'flake)
+    (user-error "search.nixos.org does not index flake nodes"))
   (unless nixos--browse-name
     (user-error "No option or package in this buffer"))
   (let ((url (if (eq nixos--browse-type 'option)
@@ -484,6 +502,13 @@ convention."
                   (let ((default-directory dir))
                     (nixos-package-local)))
                  (_ (nixos-package nixos--browse-name))))
+      (flake (let ((data (and nixos--flake-cache
+                              (gethash nixos--browse-name nixos--flake-cache))))
+               (if data
+                   (nixos--display-flake
+                    nixos--browse-name data nixos--browse-flake-ref)
+                 (user-error "Flake node `%s' no longer cached"
+                             nixos--browse-name))))
       (t (user-error "Unknown browse type %s" nixos--browse-type)))
     (goto-char pt)))
 
@@ -652,6 +677,152 @@ installed Nix package."
         (set-buffer-modified-p nil)))
     (pop-to-buffer buf)))
 
+
+;;; Flakes
+
+(defun nixos--display-flake (name data &optional ref)
+  "Create a formatted detail buffer for flake node NAME with DATA.
+DATA is the leaf hash table from `nix flake show --json'.  REF is
+the flake reference the leaf came from, if known.
+
+Only the data that `flake show --json' emits is shown: the node
+type, full path, the derivation name and a description.  There is
+no store path, so the requisites view and copy-store-path actions
+are unavailable here."
+  (let ((buf (get-buffer-create (format "*nixos-flake %s*" name))))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (nixos-browse-mode)
+        (nixos--browse-setup 'flake name)
+        (setq-local nixos--browse-flake-ref ref)
+        ;; Title
+        (insert (propertize name 'face 'nixos-package-name) "\n\n")
+        ;; Fields
+        (let ((type (gethash "type" data)))
+          (when type
+            (nixos--field "Type:" type)))
+        (nixos--field "Path:" name)
+        (let ((node-name (gethash "name" data)))
+          (when (and node-name (not (eq node-name :null)))
+            (nixos--field "Name:" node-name)))
+        (let ((desc (gethash "description" data)))
+          (when (and desc (not (eq desc :null)) (not (string-empty-p desc)))
+            (nixos--field "Description:" desc 'nixos-description)))
+        (when ref
+          (nixos--field "Flake:" ref))
+        (goto-char (point-min))
+        (set-buffer-modified-p nil)))
+    (pop-to-buffer buf)))
+
+(defun nixos--flake-leaf-p (node)
+  "Return non-nil if NODE is a flake show leaf.
+A leaf is a hash table carrying a \"type\" key; intermediate
+grouping attrsets and empty system subtrees do not."
+  (and (hash-table-p node) (gethash "type" node)))
+
+(defun nixos--flake-flatten (json)
+  "Flatten `nix flake show --json' JSON into a path-keyed hash table.
+JSON is the parsed top-level hash table.  Returns a hash table
+mapping full dotted paths (e.g. \"packages.x86_64-linux.hello\")
+to the leaf hash table.
+
+Recurses through every attrset: top-level output attrs, the
+optional system level, and any deeper grouping.  A node is a leaf
+iff it carries a \"type\" key; nodes without one are descended
+into rather than shown."
+  (let ((table (make-hash-table :test 'equal)))
+    (cl-labels ((walk (path node)
+                  (cond
+                   ((vectorp node)
+                    (dotimes (i (length node))
+                      (walk path (aref node i))))
+                   ((hash-table-p node)
+                    (if (nixos--flake-leaf-p node)
+                        (puthash path node table)
+                      (maphash
+                       (lambda (key child)
+                         (let ((seg (if (stringp key) key (prin1-to-string key))))
+                           (walk (if (string-empty-p path)
+                                     seg
+                                   (concat path "." seg))
+                                 child)))
+                       node))))))
+      (walk "" json))
+    table))
+
+(defun nixos--call-flake-show (ref)
+  "Run `nix flake show --json' for REF, return (JSON . ERROR).
+JSON is the parsed hash table on success; ERROR is the stderr on
+failure.  Returns nil entirely if the `nix' executable is missing."
+  (let ((nix-exe (if (and (boundp 'nix-executable)
+                          (stringp nix-executable))
+                     nix-executable
+                   "nix")))
+    (condition-case err
+        (let* ((stderr-file (make-temp-file "nixos-flake-stderr-"))
+               (args (list nix-exe nil (list t stderr-file) nil
+                           "--extra-experimental-features"
+                           "nix-command flakes"
+                           "flake" "show" "--json" ref)))
+          (unwind-protect
+              (with-temp-buffer
+                (let ((exit-code (apply 'call-process args)))
+                  (if (zerop exit-code)
+                      (cons (progn
+                              (goto-char (point-min))
+                              (json-parse-buffer))
+                            "")
+                    (cons nil (with-temp-buffer
+                                (insert-file-contents stderr-file)
+                                (buffer-string))))))
+            (delete-file stderr-file)))
+      (file-missing (ignore err) nil))))
+
+(defun nixos--flake-load ()
+  "Return the cached flake leaf hash table, or an empty one.
+Used as the `:cache-fn' for `nixos-browse-flakes-mode'."
+  (or nixos--flake-cache (make-hash-table :test 'equal)))
+
+(defun nixos--display-flake-node (node-name)
+  "Display details for flake node NODE-NAME at point.
+Used as the `:visit-fn' for `nixos-browse-flakes-mode'."
+  (let* ((data (and nixos--flake-cache (gethash node-name nixos--flake-cache)))
+         (ref nixos--flake-ref))
+    (if data
+        (nixos--display-flake node-name data ref)
+      (user-error "Flake node `%s' no longer cached" node-name))))
+
+;;;###autoload
+(defun nixos-flake (&optional flake-ref)
+  "Browse the outputs of a Nix flake in a sortable table.
+
+Runs `nix flake show --json' on FLAKE-REF (default: the buffer's
+`default-directory') and presents every leaf node — derivations,
+apps, NixOS configurations, templates, etc. — as a flat, sortable
+table with its full dotted path.
+
+When FLAKE-REF is non-nil it is used directly; otherwise it is
+prompted for, defaulting to the current directory."
+  (interactive)
+  (let ((ref (or flake-ref
+                 (read-string "nix flake show> " default-directory))))
+    (message "Showing flake %s..." ref)
+    (let ((show (nixos--call-flake-show ref)))
+      (cond
+       ((and (consp show) (car show))
+        (let* ((json (car show))
+               (cache (nixos--flake-flatten json)))
+          (setq nixos--flake-cache cache
+                nixos--flake-ref ref)
+          (nixos-browse-flakes (hash-table-keys cache) ref)))
+       ((consp show)
+        (user-error "flake show failed:\n%s" (cdr show)))
+       (t (user-error "`nix' executable not found (check `nix-executable')"))))))
+
+
+;;; Bookmarks
+
 (defconst nixos--package-expr-tail
   (concat
    "  depInfo = deps: map (d:"
@@ -761,14 +932,18 @@ metadata for a given package is stable forever."
 (defun nixos--browse-table-bookmark-make-record ()
   "Create a bookmark record for the current browse-table buffer.
 Intended for use as `bookmark-make-record-function' in
-`nixos-browse-options-mode' and `nixos-browse-packages-mode'."
-  (let ((type (if (derived-mode-p 'nixos-browse-options-mode)
-                  'option
-                'package))
-        (name-prefix nixos--browse-name-prefix))
-    `(,(format "NixOS %s: %s"
-               (if (eq type 'option) "option search" "package search")
-               (or name-prefix "all"))
+`nixos-browse-options-mode', `nixos-browse-packages-mode' and
+`nixos-browse-flakes-mode'."
+  (let* ((type (cond ((derived-mode-p 'nixos-browse-options-mode) 'option)
+                     ((derived-mode-p 'nixos-browse-packages-mode) 'package)
+                     ((derived-mode-p 'nixos-browse-flakes-mode) 'flake)
+                     (t 'package)))
+         (label (pcase type
+                  ('option "option search")
+                  ('package "package search")
+                  ('flake "flake search")))
+         (name-prefix nixos--browse-name-prefix))
+    `(,(format "NixOS %s: %s" label (or name-prefix "all"))
       (type . ,type)
       (name-prefix . ,name-prefix)
       (handler . nixos--bookmark-jump))))
@@ -779,7 +954,10 @@ Intended for use as `bookmark-make-record-function'."
   (unless nixos--browse-name
     (user-error "No option or package to bookmark"))
   `(,(format "NixOS %s: %s"
-             (if (eq nixos--browse-type 'option) "option" "package")
+             (pcase nixos--browse-type
+               ('option "option")
+               ('package "package")
+               ('flake "flake"))
              nixos--browse-name)
     (type . ,nixos--browse-type)
     (name . ,nixos--browse-name)
@@ -796,12 +974,15 @@ Called by the bookmark system."
     (if (assq 'name-prefix bookmark)
         ;; Table (search) bookmark — re-derive filtered name-list
         ;; from current cache, so new results appear on reopen.
-        (let ((name-list (when name-prefix
-                           (nixos--search-names type name-prefix))))
-          (cl-case type
-            (option (nixos-browse-options name-list name-prefix))
-            (package (nixos-browse-packages name-list name-prefix))
-            (t (user-error "Unknown bookmark type %s" type))))
+        (cl-case type
+          (option (nixos-browse-options
+                   (and name-prefix (nixos--search-names 'option name-prefix))
+                   name-prefix))
+          (package (nixos-browse-packages
+                    (and name-prefix (nixos--search-names 'package name-prefix))
+                    name-prefix))
+          (flake (nixos-flake name-prefix))
+          (t (user-error "Unknown bookmark type %s" type)))
       ;; Detail bookmark.
       (cl-case type
         (option (nixos-option name))
@@ -811,6 +992,19 @@ Called by the bookmark system."
                     (let ((default-directory dir))
                       (nixos-package-local)))
                    (_ (nixos-package name))))
+        (flake (let ((ref (cdr (alist-get 'source bookmark))))
+                 (let ((data (and nixos--flake-cache
+                                  (gethash name nixos--flake-cache))))
+                   (if data
+                       (nixos--display-flake name data ref)
+                     (let ((json (and ref (car (nixos--call-flake-show ref))))
+                           cache)
+                       (when (hash-table-p json)
+                         (setq cache (nixos--flake-flatten json)))
+                       (let ((data (and cache (gethash name cache))))
+                         (if data
+                             (nixos--display-flake name data ref)
+                           (user-error "Flake node `%s' not found" name))))))))
         (t (user-error "Unknown bookmark type %s" type))))))
 
 
@@ -987,8 +1181,8 @@ the buffer with the original name.")
 (cl-defmacro nixos--define-browse-mode (type &key mode-label buffer-name
                                              columns sort-key
                                              extract-fields
-                                             visit-fn url-fmt
-                                             cache-fn key-fn)
+                                             visit-fn url-fmt cache-fn
+                                             key-fn)
   "Define a tabulated-list browse mode for TYPE (a symbol, e.g. option).
 Internal use only."
   (declare (indent 1))
@@ -1007,7 +1201,9 @@ Internal use only."
          :doc ,(format "Keymap for `%s'." mode)
          :parent tabulated-list-mode-map
          "RET" #',visit
-         "b"   #',search-url)
+         ,@(if url-fmt
+               `("b"   #',search-url)
+             nil))
 
        (define-derived-mode ,mode tabulated-list-mode
          ,mode-label
@@ -1053,10 +1249,12 @@ appear in the list." typestr)
          (interactive)
          (,visit-fn (,current-name-fn)))
 
-       (defun ,search-url ()
-         ,(format "Open the current %s on search.nixos.org." typestr)
-         (interactive)
-         (browse-url (format ,url-fmt (,current-name-fn))))
+       ,(if url-fmt
+            `(defun ,search-url ()
+               ,(format "Open the current %s on search.nixos.org." typestr)
+               (interactive)
+               (browse-url (format ,url-fmt (,current-name-fn))))
+          nil)
 
        (defun ,refresh (&rest _ignored)
          ,(format "Refresh the %s table.
@@ -1164,12 +1362,29 @@ Add this alongside `nixos-thing-at-point-setup' in
   :cache-fn nixos--packages-load
   :key-fn (lambda (k) (string-remove-prefix nixos--package-key-prefix k)))
 
+
+;;; Flake Browse Mode
+
+(nixos--define-browse-mode flake
+  :mode-label "NixOS-Flakes"
+  :buffer-name "*Nix Flakes*"
+  :columns [("Path" 50 t) ("Type" 20 t) ("Description" 0 nil)]
+  :sort-key ("Path" . nil)
+  :extract-fields ((or (gethash "type" data) "")
+                   (propertize (or (nixos--trim-description
+                                    (nixos--slurp-description data)) "")
+                               'face 'nixos-description))
+  :visit-fn nixos--display-flake-node
+  :cache-fn nixos--flake-load
+  :key-fn nil)
+
 ;; The browse-table commands are defined inside the macro above; the
 ;; ;;;###autoload cookie sits indented in the macro body so the
 ;; loaddefs scraper never sees it.  Emit explicit autoloads so the
 ;; commands are available before the package loads.
 (autoload 'nixos-browse-options "nixos" nil t)
 (autoload 'nixos-browse-packages "nixos" nil t)
+(autoload 'nixos-browse-flakes "nixos" nil t)
 
 
 ;;; Embark
