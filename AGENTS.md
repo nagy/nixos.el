@@ -396,6 +396,11 @@ clickable package names and store paths aligned to a global
 column.  Package names are `insert-text-button` widgets navigating
 to `nixos-package`.
 
+A `Position:` field shows the package's `meta.position` when
+present, as a clickable `insert-text-button` calling
+`find-file-at-point`.  The value is also stored in the
+buffer-local `nixos--browse-position` var.
+
 ### Functional purity
 
 Keep side-effecting code in interactive commands.  Internal functions

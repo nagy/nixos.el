@@ -425,14 +425,21 @@ source.")
   "The flake reference for the node in the current browse buffer.
 Used by `nixos-browse-refresh' and bookmarks to re-run\n`nix flake show' for the same flake.")
 
-(defun nixos--browse-setup (type name &optional out-path source)
+(defvar-local nixos--browse-position nil
+  "Source position (`meta.position') of the package in the current
+browse buffer, if any.  A string of the form
+\"/nix/store/.../package.nix:LINE\".")
+
+(defun nixos--browse-setup (type name &optional out-path source position)
   "Configure the current buffer for browsing TYPE (option or package) NAME.
 OUT-PATH is the package store path, if any.  SOURCE is the
-package origin as understood by `nixos--browse-source'."
+package origin as understood by `nixos--browse-source'.
+POSITION is the package's `meta.position' string, if any."
   (setq nixos--browse-type type
         nixos--browse-name name
         nixos--browse-out-path out-path
-        nixos--browse-source source))
+        nixos--browse-source source
+        nixos--browse-position position))
 
 (defun nixos-browse-show-requisites ()
   "Open the store path of the current package in `nix-store-path-mode'.
@@ -591,7 +598,7 @@ installed Nix package."
       (let ((inhibit-read-only t))
         (erase-buffer)
         (nixos-browse-mode)
-        (nixos--browse-setup 'package name out-path source)
+        (nixos--browse-setup 'package name out-path source (alist-get 'position info))
         ;; Title
         (insert (propertize (format "%-14s" "Name:") 'face 'nixos-field-label)
                 (propertize name 'face 'nixos-package-name) "\n")
@@ -620,6 +627,14 @@ installed Nix package."
           (let ((repo (alist-get 'repository info)))
             (when (and repo (stringp repo) (not (string-empty-p repo)))
               (nixos--link "Repository:" repo)))
+          (let ((pos (alist-get 'position info)))
+            (when (and pos (stringp pos) (not (string-empty-p pos)))
+              (nixos--field "Position:" nil)
+              (insert-text-button pos
+                                  'action (lambda (_) (find-file-at-point pos))
+                                  'follow-link t
+                                  'help-echo (format "Visit source: %s" pos))
+              (insert "\n")))
           (let ((lic (gethash "license" meta-data)))
             (when lic
               (nixos--field "License:"
@@ -833,7 +848,8 @@ prompted for, defaulting to the current directory."
    "     (depInfo (pkg.buildInputs or []))"
    "     (depInfo (pkg.nativeBuildInputs or []))"
    "     (pkg.pname or \"\")"
-   "     (pkg.src.meta.homepage or pkg.src.url or \"\") ]"))
+   "     (pkg.src.meta.homepage or pkg.src.url or \"\")"
+   "     (pkg.meta.position or \"\") ]"))
 
 (defun nixos--parse-package-result (result)
   "Parse the JSON RESULT vector from nix-instantiate into an alist.
@@ -848,14 +864,16 @@ Returns a cons cell (ALIST . \"\") on success, or (nil . ERROR-MSG)."
           (build (and (>= (length result) 4) (aref result 3)))
           (native (and (>= (length result) 5) (aref result 4)))
           (pname (and (>= (length result) 6) (aref result 5)))
-          (repo (and (>= (length result) 7) (aref result 6))))
+          (repo (and (>= (length result) 7) (aref result 6)))
+          (pos (and (>= (length result) 8) (aref result 7))))
       (cons (list (cons 'meta (and meta (not (eq meta :null)) meta))
                   (cons 'outPath (and out (not (eq out :null)) out))
                   (cons 'version (and ver (not (eq ver :null)) ver))
                   (cons 'buildInputs (and build (vectorp build) (not (eq build :null)) build))
                   (cons 'nativeBuildInputs (and native (vectorp native) (not (eq native :null)) native))
                   (cons 'pname (and pname (not (eq pname :json-false)) pname))
-                  (cons 'repository (and repo (not (eq repo :json-false)) (not (string-empty-p repo)) repo)))
+                  (cons 'repository (and repo (not (eq repo :json-false)) (not (string-empty-p repo)) repo))
+                  (cons 'position (and pos (not (eq pos :json-false)) (not (string-empty-p pos)) pos)))
             ""))))
 
 (defun nixos--call-nix-package-expr (expr &rest extra-args)
