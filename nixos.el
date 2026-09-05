@@ -797,6 +797,39 @@ before `nix' sees it (Nix does not expand `~' in flake refs)."
             (delete-file stderr-file)))
       (file-missing (ignore err) nil))))
 
+(defun nixos--call-flake-metadata (ref)
+  "Run `nix flake metadata --json' for REF, return (DATA . ERROR).
+
+DATA is the parsed hash table on success; ERROR is the stderr on
+failure.  Returns nil entirely if the `nix' executable is missing.
+Unlike `nixos--call-flake-show', this needs no evaluation and
+provides flake-level fields (description, path, url, revision,
+lastModified, inputs)."
+  (let ((ref (if (string-prefix-p "~" ref) (expand-file-name ref) ref))
+        (nix-exe (if (and (boundp 'nix-executable)
+                          (stringp nix-executable))
+                     nix-executable
+                   "nix")))
+    (condition-case err
+        (let* ((stderr-file (make-temp-file "nixos-flake-metadata-stderr-"))
+               (args (list nix-exe nil (list t stderr-file) nil
+                           "--extra-experimental-features"
+                           "nix-command flakes"
+                           "flake" "metadata" "--json" ref)))
+          (unwind-protect
+              (with-temp-buffer
+                (let ((exit-code (apply 'call-process args)))
+                  (if (zerop exit-code)
+                      (cons (progn
+                              (goto-char (point-min))
+                              (json-parse-buffer))
+                            "")
+                    (cons nil (with-temp-buffer
+                                (insert-file-contents stderr-file)
+                                (buffer-string))))))
+            (delete-file stderr-file)))
+      (file-missing (ignore err) nil))))
+
 (defvar-keymap nixos-flake-overview-mode-map
   :doc "Keymap for `nixos--display-flake-overview' buffers."
   :parent nixos-browse-mode-map
@@ -816,13 +849,52 @@ output line is an \`insert-text-button' carrying its node path as
                                 nixos--flake-ref))
       (user-error "No flake output on this line"))))
 
-(defun nixos--display-flake-overview (ref cache)
+(defun nixos--flake-metadata-fields (meta)
+  "Return an alist of ((LABEL . VALUE) ...) from flake metadata META.
+
+META is the hash table from `nix flake metadata --json', or nil.
+Only human-meaningful fields are extracted: description, path, url,
+revision, last-modified and inputs.  Sparse values are omitted."
+  (and (hash-table-p meta)
+       (let ((desc (gethash "description" meta))
+             (path (gethash "path" meta))
+             (url (gethash "url" meta))
+             (rev (gethash "revision" meta))
+             (last (gethash "lastModified" meta))
+             (inputs (and (hash-table-p (gethash "locks" meta))
+                          (gethash "nodes" (gethash "locks" meta)))))
+         (delq nil
+               (list
+                (when (and desc (not (string-empty-p desc)))
+                  (cons "Description:" desc))
+                (when (and path (not (string-empty-p path)))
+                  (cons "Path:" path))
+                (when (and url (not (string-empty-p url)))
+                  (cons "URL:" url))
+                (when (and rev (not (string-empty-p rev)))
+                  (cons "Revision:" rev))
+                (when (and last (not (eq last :null)))
+                  (cons "Last modified:"
+                        (format-time-string "%Y-%m-%d %H:%M"
+                                            (seconds-to-time last))))
+                (when (hash-table-p inputs)
+                  (let* ((names (sort (let (acc)
+                                        (maphash
+                                         (lambda (k _) (push k acc))
+                                         inputs)
+                                        acc)
+                                      #'string<))
+                         (formatted (mapconcat #'identity names ", ")))
+                    (cons "Inputs:" formatted))))))))
+
+(defun nixos--display-flake-overview (ref cache &optional meta)
   "Create a whole-flake detail buffer for REF from CACHE.
 
 CACHE is the path-keyed leaf hash table from
-`nixos--flake-flatten'.  Shows the flake reference and a clickable
-list of every leaf node.  Pressing RET (or clicking) on a line
-opens the node's detail buffer via `nixos--display-flake'."
+`nixos--flake-flatten'.  META is optional data from
+`nix flake metadata --json' shown as flake-level fields above the
+output list.  Pressing RET (or clicking) on a line opens the
+node's detail buffer via `nixos--display-flake'."
   (let ((buf (get-buffer-create (format "*nixos-flake %s*" ref)))
         (names (sort (hash-table-keys cache) #'string<)))
     (with-current-buffer buf
@@ -839,8 +911,13 @@ opens the node's detail buffer via `nixos--display-flake'."
         (setq-local nixos--browse-flake-ref ref)
         (setq-local nixos--browse-name ref)
         ;; Title.
-        (insert (propertize "Flake:" 'face 'nixos-field-label)
-                (propertize ref 'face 'nixos-package-name) "\n\n")
+        (insert (propertize (format "%-14s" "Flake:")
+                            'face 'nixos-field-label)
+                (propertize ref 'face 'nixos-package-name) "\n")
+        ;; Flake-level metadata fields.
+        (dolist (field (nixos--flake-metadata-fields meta))
+          (nixos--field (car field) (cdr field)))
+        (insert "\n")
         ;; Node list header.
         (insert (propertize (format "Outputs (%d):" (length names))
                             'face 'nixos-field-label)
@@ -899,10 +976,11 @@ argument or from a bookmark)."
       (cond
        ((and (consp show) (car show))
         (let* ((json (car show))
-               (cache (nixos--flake-flatten json)))
+               (cache (nixos--flake-flatten json))
+               (meta (car (nixos--call-flake-metadata ref))))
           (setq nixos--flake-cache cache
                 nixos--flake-ref ref)
-          (nixos--display-flake-overview ref cache)))
+          (nixos--display-flake-overview ref cache meta)))
        ((consp show)
         (user-error "flake show failed:\n%s" (cdr show)))
        (t (user-error "`nix' executable not found (check `nix-executable')"))))))

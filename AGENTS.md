@@ -29,7 +29,8 @@ fails the build.
 4. Helpers (`nixos--slurp-description`, `nixos--search-names`,
    `nixos--package-expr-tail`, `nixos--parse-package-result`,
    `nixos--call-nix-package-expr`, `nixos--call-nix-url-expr`,
-   `nixos--flake-flatten`, `nixos--call-flake-show`)
+   `nixos--flake-flatten`, `nixos--call-flake-show`,
+   `nixos--call-flake-metadata`)
 5. Options / Packages / Flakes collection + annotation
 6. Browse Major Mode (`nixos-browse-mode`)
 7. Display helpers (`nixos--display-option`, `nixos--display-package`,
@@ -314,6 +315,15 @@ of every leaf node; `RET`/click opens a node's own detail buffer.
   `nix-instantiate-executable`, which drives only package metadata.
   Uses the same temp-file stderr capture + `condition-case`
   `file-missing` pattern as `nixos--call-nix-package-expr`.
+- **`nixos--call-flake-metadata`** shells out to `nix flake metadata
+  --json` (same `nix-executable` / feature flags / stderr-capture
+  pattern).  It runs **without evaluation**, so it never hits the
+  user's `nixpkgs` overlays and needs no `--impure`.  `nixos-flake`
+  calls it alongside `flake show`; the overview buffer renders
+  flake-level fields via `nixos--flake-metadata-fields`:
+  Description, Path, URL, Revision, Last modified, Inputs (from
+  `locks.nodes`).  Sparse/empty values — and a nil META when the
+  command fails — are omitted gracefully.
 - **`~` expansion in flake refs** — Nix does not expand `~` in flake
   references, so "~/my-flake" is treated as a literal relative path
   and fails ("No such file or directory" pointing at

@@ -1492,21 +1492,44 @@ converted to strings by stripping the leading colon."
             (should-not (nixos--project-flake-ref))))
       (delete-directory dir t))))
 
+(ert-deftest nixos-flake-metadata-fields ()
+  "`nixos--flake-metadata-fields' extracts human-meaningful fields."
+  (let* ((meta (make-hash-table :test 'equal))
+         (locks (make-hash-table :test 'equal))
+         (nodes (make-hash-table :test 'equal)))
+    (puthash "description" "A demo flake" meta)
+    (puthash "path" "/nix/store/abc-source" meta)
+    (puthash "revision" "f00d" meta)
+    (puthash "lastModified" 1788640836 meta)
+    (puthash "nixpkgs" (make-hash-table :test 'equal) nodes)
+    (puthash "crane" (make-hash-table :test 'equal) nodes)
+    (puthash "locks" locks meta)
+    (puthash "nodes" nodes locks)
+    (let ((fields (nixos--flake-metadata-fields meta)))
+      (should (equal (alist-get "Description:" fields) "A demo flake"))
+      (should (equal (alist-get "Path:" fields) "/nix/store/abc-source"))
+      (should (equal (alist-get "Revision:" fields) "f00d"))
+      (should (equal (alist-get "Inputs:" fields) "crane, nixpkgs")))))
+
 (ert-deftest nixos-display-flake-overview ()
-  "`nixos--display-flake-overview' lists each output node clickably."
+  "`nixos--display-flake-overview' lists outputs and flake metadata."
   (let* ((cache (make-hash-table :test 'equal))
          (node (make-hash-table :test 'equal))
+         (meta (make-hash-table :test 'equal))
          (displayed nil))
     (puthash "type" "derivation" node)
     (puthash "description" "A greeting program" node)
     (puthash "packages.x86_64-linux.hello" node cache)
+    (puthash "description" "A demo flake" meta)
     (cl-letf (((symbol-function 'pop-to-buffer)
                (lambda (buf) (setq displayed buf) (set-buffer buf))))
-      (nixos--display-flake-overview "/tmp/ref" cache)
+      (nixos--display-flake-overview "/tmp/ref" cache meta)
       (should displayed)
       (with-current-buffer displayed
         (should (string-match-p "packages.x86_64-linux.hello"
-                                (buffer-string))))
+                                (buffer-string)))
+        (should (string-match-p "Flake:" (buffer-string)))
+        (should (string-match-p "A demo flake" (buffer-string))))
       (kill-buffer displayed)))))
 
 (provide 'nixos-tests)
