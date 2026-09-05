@@ -22,7 +22,8 @@ fails the build.
 
 ### nixos.el (core, ~1350 lines)
 
-1. Faces (`nixos-package-name`, `nixos-field-label`, `nixos-description`)
+1. Faces (`nixos-package-name`, `nixos-field-label`, `nixos-description`,
+   `nixos-version`, `nixos-date`, `nixos-revision`)
 2. defgroup / defcustom (6 options incl. URL templates for search.nixos.org)
 3. Cache (hash-table vars, load functions, `nixos--ensure-nixpkgs-root`,
    `nixos-refresh-cache`, plus `nixos--flake-cache`/`nixos--flake-ref`)
@@ -479,9 +480,17 @@ should be pure where possible — makes them testable without mocking.
 
 Three custom faces (`nixos-package-name`, `nixos-field-label`,
 `nixos-description`) inherit from `package.el` faces when
-available, with built-in fallbacks (`bold`, `default`).  No
+available, with built-in fallbacks (`bold`, `default`).  `nixos-version`
+and `nixos-date` inherit from `shadow`, a plain built-in.  `nixos-revision`
+inherits `shadow` too with a background-adapting foreground (light/dark)
+for the `Revision:` flake hash, in the spirit of `magit-hash`.  No
 `(require 'package)` needed — the `:inherit` list resolves
-left-to-right, skipping undefined faces.
+left-to-right, skipping undefined faces.  `nixos-date` is applied to
+all rendered timestamps (the `Last modified:` flake field and the
+per-input dates in the flake input tree); `nixos-revision` to the
+`Revision:` value.  The flake overview `Description:` field uses
+`nixos-description` and its `Path:` field reuses the same on-disk-status
+face scheme as the package `Store path:` (see `nixos--display-package`).
 
 ## TODO
 

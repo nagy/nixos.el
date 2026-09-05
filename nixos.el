@@ -159,6 +159,27 @@ Inherits from `package-description' when available."
   "Face for package versions in nixos detail and table buffers."
   :group 'nixos)
 
+(defface nixos-date
+  '((t :inherit (shadow)))
+  "Face for the date part of timestamps in nixos detail buffers.
+Inherits from `shadow' like the `nixos-version' face; the value is a
+rendered timestamp (e.g. the `Last modified:' field and the per-input
+dates in the flake input tree).
+
+Customize this if you want dates to stand out differently from
+regular text; the default is a muted `shadow' style."
+  :group 'nixos)
+
+(defface nixos-revision
+  '((((background light)) :inherit shadow :foreground "#5c6470")
+    (((background dark))  :inherit shadow :foreground "#a8b0b8")
+    (t :inherit shadow))
+  "Face for the revision/hash value in nixos detail buffers.
+Used for the `Revision:' flake field — the commit object name — in the
+spirit of `magit-hash' (face for the commit object name in log output).
+The foreground adapts to the background; customize to taste."
+  :group 'nixos)
+
 
 ;;; Cache
 
@@ -881,9 +902,12 @@ official `nix flake metadata' input tree."
                  (t nil))))
       (when src
         (if (and last (not (eq last :null)))
-            (format "%s (%s)" src
-                    (format-time-string "%Y-%m-%d %H:%M:%S"
-                                        (seconds-to-time last)))
+            (concat src " ("
+                    (propertize
+                     (format-time-string "%Y-%m-%d %H:%M:%S"
+                                         (seconds-to-time last))
+                     'face 'nixos-date)
+                    ")")
           src)))))
 
 (defun nixos--flake-input-tree (nodes root)
@@ -955,17 +979,28 @@ revision, last-modified and inputs.  Sparse values are omitted.  The
          (delq nil
                (list
                 (when (and desc (not (string-empty-p desc)))
-                  (cons "Description:" desc))
+                  (cons "Description:"
+                        (propertize desc 'face 'nixos-description)))
                 (when (and path (not (string-empty-p path)))
-                  (cons "Path:" path))
+                  ;; Same on-disk-status face scheme as the package detail
+                  ;; buffer's `Store path:' field (see `nixos--display-package').
+                  (cons "Path:"
+                        (propertize path
+                                    'face (cond ((file-directory-p path)
+                                                 'dired-directory)
+                                                ((file-exists-p path) nil)
+                                                (t 'error)))))
                 (when (and url (not (string-empty-p url)))
                   (cons "URL:" url))
                 (when (and rev (not (string-empty-p rev)))
-                  (cons "Revision:" rev))
+                  (cons "Revision:"
+                        (propertize rev 'face 'nixos-revision)))
                 (when (and last (not (eq last :null)))
                   (cons "Last modified:"
-                        (format-time-string "%Y-%m-%d %H:%M"
-                                            (seconds-to-time last))))
+                        (propertize
+                         (format-time-string "%Y-%m-%d %H:%M"
+                                             (seconds-to-time last))
+                         'face 'nixos-date)))
                 (when (and (hash-table-p inputs) (stringp root))
                   (cons "Inputs:" (nixos--flake-input-tree inputs root))))))))
 
@@ -1100,7 +1135,6 @@ argument or from a bookmark)."
                ((nixos--project-flake-ref))
                (t (nixos--read-flake-ref))))
          (ref (if (string-prefix-p "~" ref) (expand-file-name ref) ref)))
-    (message "Showing flake %s..." ref)
     (let ((show (nixos--call-flake-show ref)))
       (cond
        ((and (consp show) (car show))
