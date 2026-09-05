@@ -1453,29 +1453,6 @@ converted to strings by stripping the leading colon."
         (should-not (car result))
         (should (stringp (cdr result)))))))
 
-(ert-deftest nixos-flake-browse-table-bookmark ()
-  "Table bookmark record for flakes includes the flake type."
-  (with-temp-buffer
-    (nixos-browse-flakes-mode)
-    (setq-local nixos--browse-name-prefix ".")
-    (let ((rec (nixos--browse-table-bookmark-make-record)))
-      (should (stringp (car rec)))
-      (should (string-match-p "flake" (car rec)))
-      (should (eq (alist-get 'type rec) 'flake))
-      (should (equal (alist-get 'name-prefix rec) "."))
-      (should (eq (alist-get 'handler rec) 'nixos--bookmark-jump)))))
-
-(ert-deftest nixos-bookmark-jump-table-flake ()
-  "`nixos--bookmark-jump' calls `nixos-flake' for flake table bookmarks."
-  (let ((called-ref :sentinel))
-    (cl-letf (((symbol-function 'switch-to-buffer)
-               (lambda (buf) (set-buffer buf)))
-              ((symbol-function 'nixos-flake)
-               (lambda (ref) (setq called-ref ref))))
-      (nixos--bookmark-jump '((type . flake)
-                              (name-prefix . ".")))
-      (should (equal called-ref ".")))))
-
 (ert-deftest nixos-bookmark-jump-detail-flake ()
   "`nixos--bookmark-jump' detail flake re-displays the cached node."
   (let* ((data (make-hash-table :test 'equal))
@@ -1494,19 +1471,43 @@ converted to strings by stripping the leading colon."
         (should (string-match-p "apps.x86_64-linux.foo" (buffer-string))))
       (kill-buffer displayed))))
 
-;;; Flake browse-mode entry
+(ert-deftest nixos-project-flake-ref ()
+  "`nixos--project-flake-ref' returns the project root when it is a flake."
+  (let* ((dir (make-temp-file "nixos-proj-" t))
+         (projects (list (list dir nil))))
+    (unwind-protect
+        (progn
+          (write-region "" nil (expand-file-name "flake.nix" dir))
+          (cl-letf (((symbol-function 'project-current)
+                     (lambda (_) (car projects)))
+                    ((symbol-function 'project-root)
+                     (lambda (pr) (car pr))))
+            (should (equal (nixos--project-flake-ref)
+                           (expand-file-name dir))))
+          (delete-file (expand-file-name "flake.nix" dir))
+          (cl-letf (((symbol-function 'project-current)
+                     (lambda (_) (car projects)))
+                    ((symbol-function 'project-root)
+                     (lambda (pr) (car pr))))
+            (should-not (nixos--project-flake-ref))))
+      (delete-directory dir t))))
 
-(ert-deftest nixos-browse-flakes-entry ()
-  "`nixos-browse-flakes--entry' returns a proper tabulated-list entry."
-  (let ((data (make-hash-table :test 'equal)))
-    (puthash "type" "derivation" data)
-    (puthash "description" "A greeting program" data)
-    (let ((entry (nixos-browse-flakes--entry "packages.x86_64-linux.hello" data)))
-      (should (equal (car entry) "packages.x86_64-linux.hello"))
-      (let ((cols (cadr entry)))
-        (should (equal (aref cols 0) "packages.x86_64-linux.hello"))
-        (should (equal (aref cols 1) "derivation"))
-        (should (equal (aref cols 2) "A greeting program")))))))
+(ert-deftest nixos-display-flake-overview ()
+  "`nixos--display-flake-overview' lists each output node clickably."
+  (let* ((cache (make-hash-table :test 'equal))
+         (node (make-hash-table :test 'equal))
+         (displayed nil))
+    (puthash "type" "derivation" node)
+    (puthash "description" "A greeting program" node)
+    (puthash "packages.x86_64-linux.hello" node cache)
+    (cl-letf (((symbol-function 'pop-to-buffer)
+               (lambda (buf) (setq displayed buf) (set-buffer buf))))
+      (nixos--display-flake-overview "/tmp/ref" cache)
+      (should displayed)
+      (with-current-buffer displayed
+        (should (string-match-p "packages.x86_64-linux.hello"
+                                (buffer-string))))
+      (kill-buffer displayed)))))
 
 (provide 'nixos-tests)
 ;;; nixos-tests.el ends here

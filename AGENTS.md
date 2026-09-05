@@ -33,12 +33,12 @@ fails the build.
 5. Options / Packages / Flakes collection + annotation
 6. Browse Major Mode (`nixos-browse-mode`)
 7. Display helpers (`nixos--display-option`, `nixos--display-package`,
-   `nixos--display-flake`)
+   `nixos--display-flake`, `nixos--display-flake-overview`)
 8. Bookmarks (detail + table)
 9. Interactive commands (`nixos-package` / `nixos-package-local` /
    `nixos-package-url`, `nixos-option`, `nixos-flake`)
 10. Thing-At-Point, Tabulated Browse Mode (shared macro), Eldoc
-11. Completion metadata, Package + Flake Browse Modes, Embark export + actions
+11. Completion metadata, Package Browse Mode, Embark export + actions
 
 ### ol-nixos.el (Org link types, ~130 lines)
 
@@ -282,10 +282,22 @@ which dispatches on the `source` field with `pcase`.
 
 ### Flake browsing (`nixos-flake`)
 
-`nixos-flake` runs `nix flake show --json` for a ref (default: the
-buffer's `default-directory`) and flattens it into a path-keyed
-hash table for a `nixos-browse-flakes-mode` table.
+`nixos-flake` runs `nix flake show --json` and presents a
+**whole-flake detail buffer** (not a table — there is no
+`nixos-browse-flakes` table mode).  It flattens the JSON into a
+path-keyed hash table and shows the reference plus a clickable list
+of every leaf node; `RET`/click opens a node's own detail buffer.
 
+- **Flake ref resolution.**  Called interactively without a prefix,
+  the ref defaults to `nixos--project-flake-ref` — the project root
+  when it is a flake (contains `flake.nix`) — else it falls through
+  to a prompt.  With `C-u` it always prompts (`nixos--read-flake-ref`,
+  defaulting to `default-directory`).  A string FLAKE-REF passed
+  programmatically (or from a bookmark) is used directly.
+- **`nixos--project-flake-ref`** returns the project root only when
+  `project-current`/`project-root` yield a directory that contains
+  `flake.nix`; otherwise nil (so the caller prompts).  Guards on
+  `fboundp` so `project.el` is a soft dependency.
 - **`nixos--flake-flatten`** recursively walks the parsed JSON,
   building a full dotted path per leaf.  A node is a leaf iff it
   carries a `"type"` key (matching what `flake show --json` emits);
@@ -310,18 +322,28 @@ hash table for a `nixos-browse-flakes-mode` table.
   `expand-file-name` unconditionally: it mangles registry/URL refs
   (`github:nixos/nixpkgs` becomes a bogus relative path), so
   `-file-name` is guarded by a `string-prefix-p "~"` check.
-- **No web view.**  `search.nixos.org` does not index flake nodes, so
-  the browse-table macro's `b` search-url binding is disabled for the
-  flake mode (omit `:url-fmt`) and `nixos-browse-search-url` errors
-  on `nixos--browse-type` of `flake`.
-- **Detail buffer** (`nixos--display-flake`) shows only what
+- **Overview buffer** (`nixos--display-flake-overview`) derives
+  `nixos-browse-mode` with `nixos-flake-overview-mode-map` (a
+  keymap parented on `nixos-browse-mode-map` whose `RET` is
+  `nixos-flake-visit-output`).  It is **not** bookmarkable
+  (`bookmark-make-record-function` nil) and its `revert-buffer-function`
+  re-runs `nixos-flake` on the ref.  Each node line is an
+  `insert-text-button` carrying the node path as `button-data`.
+- **Node detail buffer** (`nixos--display-flake`) shows only what
   `flake show --json` emits: Type, Path, Name, Description, Flake ref.
   There is no store path, so `r` (requisites) and `w` (copy-store-path)
-  error naturally (the `nixos--browse-out-path` stays nil).
+  error naturally (the `nixos--browse-out-path` stays nil).  It sets
+  `nixos--browse-name` to the node path and is bookmarkable; the
+  detail bookmark stores `source` as the flake ref.
+- **No web view.**  `search.nixos.org` does not index flake nodes, so
+  `nixos-browse-search-url` errors on `nixos--browse-type` of `flake`.
 - The `nixos--browse-source` enum is **not** extended for flakes.
   Flakes use the separate buffer-local `nixos--browse-flake-ref`
   instead; refresh and detail/bookmark dispatch on `flake` via the
-  cached `nixos--flake-cache` (or a fresh `flake show` if evicted).
+  cached `nixos--flake-cache` (or a fresh `flake show` if evicted).  Only
+  **node** bookmarks exist for flakes — there are no flake **table**
+  bookmarks, so `nixos--bookmark-jump`'s `cl-case` has no `flake`
+  table branch (removed with `nixos-browse-flakes`).
 
 ### Test conventions
 
