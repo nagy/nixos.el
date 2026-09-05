@@ -324,9 +324,16 @@ of every leaf node; `RET`/click opens a node's own detail buffer.
   Description, Path, URL, Revision, Last modified, Inputs (from
   `locks.nodes`).  Sparse/empty values — and a nil META when the
   command fails — are omitted gracefully.  `Inputs` is returned as a
-  list of node names and rendered as its own block (a header line then
-  one item per line), matching the Outputs section layout; the scalar
-  fields render inline.
+  list of tree display lines rendered as its own block under an
+  `Inputs:` header, matching the official `nix flake metadata` input
+  tree: `├───`/`└───` branch chars, sub-inputs indented, `NAME follows
+  input 'X'` lines for follow relationships, and each input shown as a
+  source label.  Sources are formatted from each node's locked/original
+  attrsets (`github:OWNER/REPO/REV` for github inputs, abbreviated
+  local paths for file inputs) with a `(YYYY-MM-DD HH:MM:SS)` date when
+  a lastModified timestamp exists; narHashes are omitted.  The source
+  formatting lives in `nixos--flake-input-source` and the tree walk in
+  `nixos--flake-input-tree`.
 - **`~` expansion in flake refs** — Nix does not expand `~` in flake
   references, so "~/my-flake" is treated as a literal relative path
   and fails ("No such file or directory" pointing at

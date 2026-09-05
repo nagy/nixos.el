@@ -849,12 +849,99 @@ output line is an \`insert-text-button' carrying its node path as
                                 nixos--flake-ref))
       (user-error "No flake output on this line"))))
 
+(defun nixos--flake-input-source (node)
+  "Return a display string for an input NODE: source (and date), or nil.
+
+The source is formatted from the node's \"locked\"/\"original\"
+attrsets.  For github inputs this is \"github:OWNER/REPO/REV\"; for
+local path/file inputs the URL is abbreviated.  When a lastModified
+timestamp is present, the date is appended in parens, matching the
+official `nix flake metadata' input tree."
+  (when (hash-table-p node)
+    (let* ((locked (gethash "locked" node))
+           (orig (gethash "original" node))
+           (type (or (and (hash-table-p locked) (gethash "type" locked))
+                     (and (hash-table-p orig) (gethash "type" orig))))
+           (owner (and (hash-table-p locked) (gethash "owner" locked)))
+           (repo (and (hash-table-p locked) (gethash "repo" locked)))
+           (rev (and (hash-table-p locked) (gethash "rev" locked)))
+           (url (or (and (hash-table-p locked) (gethash "url" locked))
+                    (and (hash-table-p orig) (gethash "url" locked))))
+           (last (and (hash-table-p locked) (gethash "lastModified" locked)))
+           (src (cond
+                 ((and (equal type "github") owner repo rev)
+                  (format "github:%s/%s/%s" owner repo rev))
+                 ((stringp url)
+                  ;; Local file/path inputs: strip a file:// prefix and
+                  ;; abbreviate the resulting filesystem path (~).
+                  (if (string-prefix-p "file://" url)
+                      (abbreviate-file-name
+                       (url-unhex-string (substring url 7)))
+                    url))
+                 (t nil))))
+      (when src
+        (if (and last (not (eq last :null)))
+            (format "%s (%s)" src
+                    (format-time-string "%Y-%m-%d %H:%M:%S"
+                                        (seconds-to-time last)))
+          src)))))
+
+(defun nixos--flake-input-tree (nodes root)
+  "Return the input tree display lines for NODES rooted at ROOT.
+
+NODES is the \"locks.nodes\" hash table and ROOT the node id of the
+flake itself.  Walks each node's \"inputs\", rendering a nested tree
+matching the official `nix flake metadata' output: a non-last sibling
+uses \"├───\", the last uses \"└───\", children are indented under
+their parent with \"│   \"/\"    \".  An input whose value is a vector
+follows another input and renders as NAME follows input X; a
+string value names the child node to recurse into."
+  (let (lines)
+    (cl-labels ((walk (node-id prefix visited)
+                  (let* ((node (gethash node-id nodes))
+                         (inputs (and (hash-table-p node)
+                                      (gethash "inputs" node)))
+                         (names (and inputs
+                                     (sort (let (acc)
+                                             (maphash
+                                              (lambda (k _) (push k acc))
+                                              inputs)
+                                             acc)
+                                           #'string<))))
+                    (when names
+                      (let ((n (length names)))
+                        (dotimes (i n)
+                          (let* ((name (nth i names))
+                                 (lastp (= i (1- n)))
+                                 (branch (if lastp "└───" "├───"))
+                                 (val (gethash name inputs)))
+                            (if (vectorp val)
+                                (push (concat prefix branch name
+                                              " follows input '"
+                                              (aref val 0) "'")
+                                      lines)
+                              (let* ((child (gethash val nodes))
+                                     (child-prefix (concat prefix
+                                                           (if lastp
+                                                               "    "
+                                                             "│   "))))
+                                (push (concat prefix branch name
+                                              (let ((src (nixos--flake-input-source child)))
+                                                (if src (concat ": " src) "")))
+                                      lines)
+                                (unless (or (null val) (member val visited))
+                                  (walk val child-prefix (cons val visited))))))))))))
+      (walk root "" (list root)))
+    (nreverse lines)))
+
 (defun nixos--flake-metadata-fields (meta)
   "Return an alist of ((LABEL . VALUE) ...) from flake metadata META.
 
 META is the hash table from `nix flake metadata --json', or nil.
 Only human-meaningful fields are extracted: description, path, url,
-revision, last-modified and inputs.  Sparse values are omitted."
+revision, last-modified and inputs.  Sparse values are omitted.  The
+\"Inputs:\" value is a list of tree display lines (see
+`nixos--flake-input-tree')."
   (and (hash-table-p meta)
        (let ((desc (gethash "description" meta))
              (path (gethash "path" meta))
@@ -862,7 +949,9 @@ revision, last-modified and inputs.  Sparse values are omitted."
              (rev (gethash "revision" meta))
              (last (gethash "lastModified" meta))
              (inputs (and (hash-table-p (gethash "locks" meta))
-                          (gethash "nodes" (gethash "locks" meta)))))
+                          (gethash "nodes" (gethash "locks" meta))))
+             (root (and (hash-table-p (gethash "locks" meta))
+                        (gethash "root" (gethash "locks" meta)))))
          (delq nil
                (list
                 (when (and desc (not (string-empty-p desc)))
@@ -877,17 +966,8 @@ revision, last-modified and inputs.  Sparse values are omitted."
                   (cons "Last modified:"
                         (format-time-string "%Y-%m-%d %H:%M"
                                             (seconds-to-time last))))
-                (when (hash-table-p inputs)
-                  (let ((names (sort (let (acc)
-                                        (maphash
-                                         (lambda (k _) (push k acc))
-                                         inputs)
-                                        acc)
-                                      #'string<)))
-                    ;; Inputs is a list so the overview renders each input on
-                    ;; its own line, aligned under the value column
-                    ;; (see `nixos--display-flake-overview').
-                    (cons "Inputs:" names))))))))
+                (when (and (hash-table-p inputs) (stringp root))
+                  (cons "Inputs:" (nixos--flake-input-tree inputs root))))))))
 
 (defun nixos--abbreviate-path (path)
   "Abbreviate a filesystem PATH for display, or return it unchanged.
@@ -946,13 +1026,15 @@ node's detail buffer via `nixos--display-flake'."
                                   'face 'nixos-field-label)
                       (if (cdr field) (nixos--abbreviate-path (cdr field)) "")
                       "\n")))
-          ;; Inputs list, rendered like the Outputs section below: a header
-          ;; line then one item per line, separated by a blank line.
+          ;; Inputs tree, rendered like the Outputs section below: a header
+          ;; line then the nested tree, separated by a blank line.  Each line
+          ;; is already formatted with its tree prefix, so it is inserted
+          ;; verbatim (no re-alignment or abbreviation).
           (let ((inputs (cdr (assoc "Inputs:" fields))))
             (when inputs
               (insert "\n" (propertize "Inputs:" 'face 'nixos-field-label) "\n")
               (dolist (item inputs)
-                (insert (nixos--abbreviate-path item) "\n"))))
+                (insert item "\n"))))
           (insert "\n")
           ;; Node list header.
           (insert (propertize (format "Outputs (%d):" (length names))
