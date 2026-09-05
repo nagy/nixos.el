@@ -323,7 +323,10 @@ of every leaf node; `RET`/click opens a node's own detail buffer.
   flake-level fields via `nixos--flake-metadata-fields`:
   Description, Path, URL, Revision, Last modified, Inputs (from
   `locks.nodes`).  Sparse/empty values — and a nil META when the
-  command fails — are omitted gracefully.
+  command fails — are omitted gracefully.  `Inputs` is returned as a
+  list of node names and rendered as its own block (a header line then
+  one item per line), matching the Outputs section layout; the scalar
+  fields render inline.
 - **`~` expansion in flake refs** — Nix does not expand `~` in flake
   references, so "~/my-flake" is treated as a literal relative path
   and fails ("No such file or directory" pointing at

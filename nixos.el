@@ -878,14 +878,16 @@ revision, last-modified and inputs.  Sparse values are omitted."
                         (format-time-string "%Y-%m-%d %H:%M"
                                             (seconds-to-time last))))
                 (when (hash-table-p inputs)
-                  (let* ((names (sort (let (acc)
+                  (let ((names (sort (let (acc)
                                         (maphash
                                          (lambda (k _) (push k acc))
                                          inputs)
                                         acc)
-                                      #'string<))
-                         (formatted (mapconcat #'identity names ", ")))
-                    (cons "Inputs:" formatted))))))))
+                                      #'string<)))
+                    ;; Inputs is a list so the overview renders each input on
+                    ;; its own line, aligned under the value column
+                    ;; (see `nixos--display-flake-overview').
+                    (cons "Inputs:" names))))))))
 
 (defun nixos--abbreviate-path (path)
   "Abbreviate a filesystem PATH for display, or return it unchanged.
@@ -904,8 +906,10 @@ CACHE is the path-keyed leaf hash table from
 `nix flake metadata --json' shown as flake-level fields above the
 output list.  Pressing RET (or clicking) on a line opens the
 node's detail buffer via `nixos--display-flake'."
-  (let ((buf (get-buffer-create (format "*nixos-flake %s*" ref)))
-        (names (sort (hash-table-keys cache) #'string<)))
+  (let* ((buf-name (format "*nixos-flake %s*"
+                           (nixos--abbreviate-path ref)))
+         (buf (get-buffer-create buf-name))
+         (names (sort (hash-table-keys cache) #'string<)))
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)
@@ -933,11 +937,22 @@ node's detail buffer via `nixos--display-flake'."
                   (propertize (nixos--abbreviate-path ref)
                               'face 'nixos-package-name)
                   "\n")
+          ;; Scalar metadata fields (Flake, Description, ...), each label and
+          ;; value on one line, right-aligned to the longest label.  The
+          ;; multi-line Inputs list is handled separately below.
           (dolist (field fields)
-            (insert (propertize (funcall pad (car field))
-                                'face 'nixos-field-label)
-                    (if (cdr field) (nixos--abbreviate-path (cdr field)) "")
-                    "\n"))
+            (when (not (listp (cdr field)))
+              (insert (propertize (funcall pad (car field))
+                                  'face 'nixos-field-label)
+                      (if (cdr field) (nixos--abbreviate-path (cdr field)) "")
+                      "\n")))
+          ;; Inputs list, rendered like the Outputs section below: a header
+          ;; line then one item per line, separated by a blank line.
+          (let ((inputs (cdr (assoc "Inputs:" fields))))
+            (when inputs
+              (insert "\n" (propertize "Inputs:" 'face 'nixos-field-label) "\n")
+              (dolist (item inputs)
+                (insert (nixos--abbreviate-path item) "\n"))))
           (insert "\n")
           ;; Node list header.
           (insert (propertize (format "Outputs (%d):" (length names))
@@ -965,7 +980,7 @@ node's detail buffer via `nixos--display-flake'."
                                       (nixos--display-flake
                                        name (gethash name cache) ref))
                                     'follow-link t
-                                    'face 'nixos-package-name
+                                    'face 'link
                                     'help-echo (format "View output: %s" name)
                                     'button-data name)
                 (insert (make-string (+ 1 (- max-path (string-width name))) ?\s))
