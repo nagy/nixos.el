@@ -725,7 +725,7 @@ are unavailable here."
           (when (and desc (not (eq desc :null)) (not (string-empty-p desc)))
             (nixos--field "Description:" desc 'nixos-description)))
         (when ref
-          (nixos--field "Flake:" ref))
+          (nixos--field "Flake:" (nixos--abbreviate-path ref)))
         (goto-char (point-min))
         (set-buffer-modified-p nil)))
     (pop-to-buffer buf)))
@@ -887,6 +887,15 @@ revision, last-modified and inputs.  Sparse values are omitted."
                          (formatted (mapconcat #'identity names ", ")))
                     (cons "Inputs:" formatted))))))))
 
+(defun nixos--abbreviate-path (path)
+  "Abbreviate a filesystem PATH for display, or return it unchanged.
+Only absolute local paths (starting with a slash or a tilde) are sent
+through `abbreviate-file-name'; URLs and flake references such as
+\"github:...\" are left untouched."
+  (if (and (stringp path) (string-match-p "\\`[/~]" path))
+      (abbreviate-file-name path)
+    path))
+
 (defun nixos--display-flake-overview (ref cache &optional meta)
   "Create a whole-flake detail buffer for REF from CACHE.
 
@@ -910,40 +919,63 @@ node's detail buffer via `nixos--display-flake'."
         (nixos--browse-setup 'flake ref)
         (setq-local nixos--browse-flake-ref ref)
         (setq-local nixos--browse-name ref)
-        ;; Title.
-        (insert (propertize (format "%-14s" "Flake:")
-                            'face 'nixos-field-label)
-                (propertize ref 'face 'nixos-package-name) "\n")
-        ;; Flake-level metadata fields.
-        (dolist (field (nixos--flake-metadata-fields meta))
-          (nixos--field (car field) (cdr field)))
-        (insert "\n")
-        ;; Node list header.
-        (insert (propertize (format "Outputs (%d):" (length names))
-                            'face 'nixos-field-label)
-                "\n")
-        ;; Clickable lines.
-        (dolist (name names)
-          (let* ((data (gethash name cache))
-                 (type (gethash "type" data))
-                 (desc (nixos--trim-description
-                        (nixos--slurp-description data))))
-            (insert-text-button name
-                                'action
-                                (lambda (_)
-                                  (nixos--display-flake
-                                   name (gethash name cache) ref))
-                                'follow-link t
-                                'face 'nixos-package-name
-                                'help-echo (format "View output: %s" name)
-                                'button-data name)
-            (when type
-              (insert (propertize (format "  %s" type)
-                                  'face 'nixos-field-label)))
-            (when desc
-              (insert (propertize (format "  %s" desc)
-                                  'face 'nixos-description)))
-            (insert "\n")))
+        ;; Fields are right-aligned to the longest label plus one column,
+        ;; so every value starts on the same column (the same pattern used
+        ;; for build-input alignment in `nixos--display-package').
+        (let* ((fields (nixos--flake-metadata-fields meta))
+               (label-width (apply #'max (mapcar #'string-width
+                                                 (cons "Flake:" (mapcar #'car fields)))))
+               ;; Pad LABEL to label-width, then one separating space.
+               (pad (lambda (label)
+                      (format (format "%%-%ds " label-width) label))))
+          (insert (propertize (funcall pad "Flake:")
+                              'face 'nixos-field-label)
+                  (propertize (nixos--abbreviate-path ref)
+                              'face 'nixos-package-name)
+                  "\n")
+          (dolist (field fields)
+            (insert (propertize (funcall pad (car field))
+                                'face 'nixos-field-label)
+                    (if (cdr field) (nixos--abbreviate-path (cdr field)) "")
+                    "\n"))
+          (insert "\n")
+          ;; Node list header.
+          (insert (propertize (format "Outputs (%d):" (length names))
+                              'face 'nixos-field-label)
+                  "\n")
+          ;; Clickable lines.  The type and description columns align at the
+          ;; longest node path plus one column.
+          (let* ((max-path (if names
+                               (apply #'max (mapcar #'string-width names))
+                             0))
+                 (max-type (apply #'max 0
+                                  (mapcar (lambda (n)
+                                            (let ((ty (gethash "type" (gethash n cache))))
+                                              (if ty (string-width ty) 0)))
+                                          names))))
+            (dolist (name names)
+              (let* ((data (gethash name cache))
+                     (type (gethash "type" data))
+                     (type-w (and type (string-width type)))
+                     (desc (nixos--trim-description
+                            (nixos--slurp-description data))))
+                (insert-text-button name
+                                    'action
+                                    (lambda (_)
+                                      (nixos--display-flake
+                                       name (gethash name cache) ref))
+                                    'follow-link t
+                                    'face 'nixos-package-name
+                                    'help-echo (format "View output: %s" name)
+                                    'button-data name)
+                (insert (make-string (+ 1 (- max-path (string-width name))) ?\s))
+                (when type
+                  (insert (propertize type 'face 'nixos-field-label))
+                  (when desc
+                    (insert (make-string (+ 1 (- max-type type-w)) ?\s))))
+                (when desc
+                  (insert (propertize desc 'face 'nixos-description)))
+                (insert "\n")))))
         (goto-char (point-min))
         (set-buffer-modified-p nil)))
     (pop-to-buffer buf)))

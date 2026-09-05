@@ -339,6 +339,15 @@ of every leaf node; `RET`/click opens a node's own detail buffer.
   (`bookmark-make-record-function` nil) and its `revert-buffer-function`
   re-runs `nixos-flake` on the ref.  Each node line is an
   `insert-text-button` carrying the node path as `button-data`.
+
+  The flake-level fields and the node list are right-aligned to the
+  longest label/path plus one column, so every value starts on the
+  same column (same pattern as the build-input alignment in
+  `nixos--display-package`).  Paths are abbreviated for display via
+  `nixos--abbreviate-path`: local absolute paths (`/...`, `~/...`)
+  are sent through `abbreviate-file-name`, while store paths
+  (`/nix/store/...`), URLs and registry refs (`github:...`) are left
+  unchanged.
 - **Node detail buffer** (`nixos--display-flake`) shows only what
   `flake show --json` emits: Type, Path, Name, Description, Flake ref.
   There is no store path, so `r` (requisites) and `w` (copy-store-path)
