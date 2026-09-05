@@ -302,6 +302,14 @@ hash table for a `nixos-browse-flakes-mode` table.
   `nix-instantiate-executable`, which drives only package metadata.
   Uses the same temp-file stderr capture + `condition-case`
   `file-missing` pattern as `nixos--call-nix-package-expr`.
+- **`~` expansion in flake refs** — Nix does not expand `~` in flake
+  references, so "~/my-flake" is treated as a literal relative path
+  and fails ("No such file or directory" pointing at
+  `.../~/my-flake`).  A flake ref is therefore passed through
+  `expand-file-name` only when it begins with `~`.  Do **not** apply
+  `expand-file-name` unconditionally: it mangles registry/URL refs
+  (`github:nixos/nixpkgs` becomes a bogus relative path), so
+  `-file-name` is guarded by a `string-prefix-p "~"` check.
 - **No web view.**  `search.nixos.org` does not index flake nodes, so
   the browse-table macro's `b` search-url binding is disabled for the
   flake mode (omit `:url-fmt`) and `nixos-browse-search-url` errors

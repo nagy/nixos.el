@@ -769,8 +769,11 @@ into rather than shown."
 (defun nixos--call-flake-show (ref)
   "Run `nix flake show --json' for REF, return (JSON . ERROR).
 JSON is the parsed hash table on success; ERROR is the stderr on
-failure.  Returns nil entirely if the `nix' executable is missing."
-  (let ((nix-exe (if (and (boundp 'nix-executable)
+failure.  Returns nil entirely if the `nix' executable is missing.
+REF is passed through `expand-file-name' so a leading `~' resolves
+before `nix' sees it (Nix does not expand `~' in flake refs)."
+  (let ((ref (if (string-prefix-p "~" ref) (expand-file-name ref) ref))
+        (nix-exe (if (and (boundp 'nix-executable)
                           (stringp nix-executable))
                      nix-executable
                    "nix")))
@@ -820,8 +823,9 @@ table with its full dotted path.
 When FLAKE-REF is non-nil it is used directly; otherwise it is
 prompted for, defaulting to the current directory."
   (interactive)
-  (let ((ref (or flake-ref
-                 (read-string "nix flake show> " default-directory))))
+  (let ((ref (let ((r (or flake-ref
+                         (read-string "nix flake show> " default-directory))))
+               (if (string-prefix-p "~" r) (expand-file-name r) r))))
     (message "Showing flake %s..." ref)
     (let ((show (nixos--call-flake-show ref)))
       (cond

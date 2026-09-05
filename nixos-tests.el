@@ -1414,6 +1414,19 @@ converted to strings by stripping the leading colon."
   (let ((nix-executable "definitely-not-a-real-binary-xyz"))
     (should-not (nixos--call-flake-show "."))))
 
+(ert-deftest nixos-flake-show-expands-tilde ()
+  "`nixos--call-flake-show' expands a leading ~ in REF before nix sees it."
+  (let ((nix-executable "nix")
+        (refs nil))
+    (cl-letf (((symbol-function 'call-process)
+               (lambda (_program &optional _infile destination _display &rest args)
+                 (push (car (last args)) refs)
+                 (when (eq destination t)
+                   (insert "{\"packages\":{\"x86_64-linux\":{\"hello\":{\"type\":\"derivation\"}}}}"))
+                 0)))
+      (nixos--call-flake-show "~/my-flake")
+      (should (equal (car refs) (expand-file-name "~/my-flake"))))))
+
 (ert-deftest nixos-flake-call-success ()
   "`nixos--call-flake-show' parses a successful flake show JSON."
   (let ((nix-executable "nix"))
