@@ -11,12 +11,15 @@ and `ol-nixos.el` (Org link types).  Built via `default.nix`
 ## Build & test
 
 ```sh
-nix-build --no-out-link default.nix          # build + run tests
+nix build                                # build + run tests
+nix flake check                          # also builds the package
 emacs --batch -L . -l nixos-tests.el -f ert-run-tests-batch-and-exit
 ```
 
-`turnCompilationWarningToError = true` — any byte-compiler warning
-fails the build.
+To skip the NixOS options JSON eval, pass an existing JSON file to the
+builder (see flake.nix; the old `nixosOptionsJson ? "/etc/..."`
+default.nix argument is gone — the flake always evaluates an empty
+config, which hits the binary cache).
 
 ## Architecture
 
@@ -103,7 +106,7 @@ error, forcing the old declare-function-stub workaround.
 ### Build-time data baking
 
 `defcustom` defaults (`nixos-options-json-file`, `nixos-search-json-file`)
-point to `/etc/` paths.  `default.nix` substitutes them with Nix
+point to `/etc/` paths.  `flake.nix` substitutes them with Nix
 store paths via `substituteInPlace` in `postPatch`.
 
 `nixosOptionsJson` defaults to evaluating an empty NixOS
