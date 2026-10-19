@@ -115,6 +115,11 @@ This derivation hits the NixOS binary cache, so no local build
 is needed on a hit.  Pass `nixosOptionsJson = "/etc/nixos-options.json"`
 to skip the eval.
 
+The package `version` comes from `self.lastModifiedDate`.  The flake
+passes `self` into `outputs` and derives `0-unstable-YYYY-MM-DD` from
+the source tree date.  No manual version bumps.  Falls back to the
+epoch when the source is not a git checkout.
+
 ### Memoization
 
 `nixos--package-meta` uses `with-memoization` on `(gethash key hash)`.
