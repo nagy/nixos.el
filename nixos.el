@@ -270,6 +270,13 @@ Returns the cached hash table."
       (setq nixos--options-cache (make-hash-table :test 'equal))))
   nixos--options-cache)
 
+(defconst nixos--package-output-re
+  "\\`\\(?:legacyPackages\\|packages\\)\\.\\([a-z0-9_-]+\\)\\."
+  "Regexp matching the output prefix of a `nix search' key.
+`nix search' emits keys like \"legacyPackages.x86_64-linux.htop\"
+and, for a flake whose packages live in `packages', like
+\"packages.x86_64-linux.htop\".")
+
 (defun nixos--packages-load ()
   "Load Nix packages from `nixos-search-json-file' into cache.
 Returns the cached hash table."
@@ -280,23 +287,28 @@ Returns the cached hash table."
                        (goto-char (point-min))
                        (json-parse-buffer))))
           (let* ((keys (hash-table-keys table))
-                 ;; Derive the system prefix from the first key, so the
-                 ;; package is correct on every Nix platform and other
-                 ;; systems' keys get stripped rather than leaking.
-                 (prefix (if keys
-                             (string-match
-                              "\\`legacyPackages\\.\\([a-z0-9_-]+\\)\\."
-                              (car keys))
-                           nil)))
-            (setq nixos--package-key-prefix
-                  (if prefix
-                      (substring (car keys) 0 (match-end 0))
-                    ""))
-            (setq nixos--packages-cache table
+                 ;; Derive the prefix from the first key that carries
+                 ;; an output prefix, and strip each key by its own
+                 ;; match, so a JSON that mixes `legacyPackages' and
+                 ;; `packages' leaks neither.
+                 (prefix (or (car (sort (delete-dups
+                                         (delq nil
+                                               (mapcar
+                                                (lambda (key)
+                                                  (when (string-match
+                                                         nixos--package-output-re
+                                                         key)
+                                                    (substring key 0 (match-end 0))))
+                                                keys)))
+                                    #'string<))
+                            "")))
+            (setq nixos--package-key-prefix prefix
+                  nixos--packages-cache table
                   nixos--packages-keys
-                  (sort (mapcar (lambda (k)
-                                  (string-remove-prefix
-                                   nixos--package-key-prefix k))
+                  (sort (mapcar (lambda (key)
+                                  (if (string-match nixos--package-output-re key)
+                                      (substring key (match-end 0))
+                                    key))
                                 keys)
                         #'string<))))
       (setq nixos--packages-cache (make-hash-table :test 'equal)

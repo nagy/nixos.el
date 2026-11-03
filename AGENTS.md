@@ -109,6 +109,15 @@ error, forcing the old declare-function-stub workaround.
 point to `/etc/` paths.  `flake.nix` substitutes them with Nix
 store paths via `substituteInPlace` in `postPatch`.
 
+The search JSON comes from `nix search path:PKGS --json`.
+`nix search` emits keys like `legacyPackages.x86_64-linux.htop`
+**and** `packages.x86_64-linux.htop`, so
+`nixos--package-output-re` covers both output kinds and
+`nixos--packages-load` strips each key by its own match.  Deriving
+one prefix string and removing it from every key leaked the other
+kind into the ID, and then into the Nix export.  Do not narrow that
+regexp to `legacyPackages`.
+
 `nixosOptionsJson` defaults to evaluating an empty NixOS
 configuration to extract the options JSON from the manual build.
 This derivation hits the NixOS binary cache, so no local build

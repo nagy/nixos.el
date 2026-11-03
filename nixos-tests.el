@@ -313,6 +313,33 @@ converted to strings by stripping the leading colon."
           (should (equal nixos--packages-keys '("htop" "neovim"))))
       (delete-file nixos-search-json-file))))
 
+(ert-deftest nixos-packages-load-packages-output ()
+  "A `packages' output prefix is stripped like `legacyPackages'."
+  (setq nixos--packages-cache nil nixos--package-key-prefix nil)
+  (let ((json "{\"packages.x86_64-linux.htop\": {}}")
+        (nixos-search-json-file (make-temp-file "search-")))
+    (unwind-protect
+        (progn
+          (write-region json nil nixos-search-json-file)
+          (nixos--packages-load)
+          (should (equal nixos--package-key-prefix
+                         "packages.x86_64-linux."))
+          (should (equal nixos--packages-keys '("htop"))))
+      (delete-file nixos-search-json-file))))
+
+(ert-deftest nixos-packages-load-mixed-outputs ()
+  "Keys of both output kinds lose their own prefix."
+  (setq nixos--packages-cache nil nixos--package-key-prefix nil)
+  (let ((json (concat "{\"legacyPackages.x86_64-linux.htop\": {},"
+                      " \"packages.x86_64-linux.neovim\": {}}"))
+        (nixos-search-json-file (make-temp-file "search-")))
+    (unwind-protect
+        (progn
+          (write-region json nil nixos-search-json-file)
+          (nixos--packages-load)
+          (should (equal nixos--packages-keys '("htop" "neovim"))))
+      (delete-file nixos-search-json-file))))
+
 (ert-deftest nixos-browse-commands-autoloaded ()
   "The browse-table commands carry top-level autoload forms."
   (let ((source (with-temp-buffer
