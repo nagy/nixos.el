@@ -253,6 +253,12 @@ the enum instead.
 - Entry format: `(id [id col1 col2...])`
 - `--current-name` wraps `tabulated-list-get-id` with a user-error
 - `--entries` accepts optional `name-list` to support Embark export
+- A column sorts by the cell string when its SORT element is `t`.
+  A SORT element may also be a predicate over entries, and the
+  package Version column uses `nixos--package-version-lessp` so
+  `1.9` sorts above `1.10`.  The built-in arrow and header click
+  keep working, and the predicate reads the entry, not the
+  buffer.
 - The browse-table commands accept an optional `name-prefix` that
   personalizes the buffer name (e.g. `*NixOS Options: htop*`),
   allowing multiple searches to coexist.  When non-nil, the filtered

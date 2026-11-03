@@ -75,6 +75,7 @@
 ;;; Code:
 
 (require 'json)
+(require 'tabulated-list)
 (require 'thingatpt)
 (require 'cl-lib)
 
@@ -1522,6 +1523,23 @@ the buffer with the original name.")
 (put 'nixos--browse-name-prefix 'permanent-local t)
 
 
+;;; Browse table helpers
+
+(defun nixos--package-version-lessp (a b)
+  "Return non-nil when the version of entry A sorts before entry B.
+A and B have the shape of `tabulated-list-entries'.  The Version
+column compares versions here instead of the strings it prints,
+so \"1.9\" lands before \"1.10\".  Fall back to `string<' when
+`version<' rejects a value."
+  (let ((a-version (aref (cadr a) 1))
+        (b-version (aref (cadr b) 1)))
+    (if (and (stringp a-version) (stringp b-version))
+        (condition-case nil
+            (version< a-version b-version)
+          (error (string< a-version b-version)))
+      (string< (format "%s" a-version) (format "%s" b-version)))))
+
+
 ;;; Tabulated Browse Mode (shared macro)
 
 (cl-defmacro nixos--define-browse-mode (type &key mode-label buffer-name
@@ -1696,7 +1714,9 @@ Add this alongside `nixos-thing-at-point-setup' in
 (nixos--define-browse-mode package
   :mode-label "NixOS-Packages"
   :buffer-name "*Nix Packages*"
-  :columns [("Package" 40 t) ("Version" 15 t) ("Description" 0 nil)]
+  :columns [("Package" 40 t)
+            ("Version" 15 nixos--package-version-lessp)
+            ("Description" 0 nil)]
   :sort-key ("Package" . nil)
   :extract-fields ((propertize (or (gethash "version" data) "")
                                'face 'nixos-version)

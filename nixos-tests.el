@@ -779,6 +779,36 @@ converted to strings by stripping the leading colon."
       (should (assoc "htop" entries))
       (should (assoc "neovim" entries)))))
 
+(ert-deftest nixos-browse-packages-version-sort ()
+  "The Version column compares versions, not printed strings."
+  (with-temp-buffer
+    (nixos-browse-packages-mode)
+    (let ((sorter (nth 2 (aref tabulated-list-format 1)))
+          (older '("a" ["a" "1.9" ""]))
+          (newer '("b" ["b" "1.10" ""])))
+      (should (functionp sorter))
+      (should (funcall sorter older newer))
+      (should-not (funcall sorter newer older)))))
+
+(ert-deftest nixos-browse-packages-version-print-order ()
+  "A version sort prints 1.9 above 1.10."
+  (nixos-test--with-packages
+      (nixos-test--packages-hash
+       '("legacyPackages.x86_64-linux.old"
+         :pname "old" :version "1.9" :description "older")
+       '("legacyPackages.x86_64-linux.new"
+         :pname "new" :version "1.10" :description "newer"))
+    (with-temp-buffer
+      (nixos-browse-packages-mode)
+      (setq tabulated-list-sort-key '("Version" . nil))
+      (setq tabulated-list-entries (nixos-browse-packages--entries))
+      (tabulated-list-init-header)
+      (tabulated-list-print)
+      (goto-char (point-min))
+      (should (equal (tabulated-list-get-id) "old"))
+      (forward-line 1)
+      (should (equal (tabulated-list-get-id) "new")))))
+
 (ert-deftest nixos-browse-packages-filter ()
   "`nixos-browse-packages--entries' filters by name-list."
   (nixos-test--with-packages
