@@ -379,6 +379,7 @@ upgrade), the Emacs session is restarted anyway."
 
 (defun nixos--slurp-description (inner)
   "Extract a one-line description string from INNER (a hash table)."
+  (declare (pure t) (side-effect-free t))
   (let ((desc (and (hash-table-p inner) (gethash "description" inner)))
         (pname (and (hash-table-p inner) (gethash "pname" inner))))
     (or desc pname "")))
@@ -808,6 +809,7 @@ are unavailable here."
   "Return non-nil if NODE is a flake show leaf.
 A leaf is a hash table carrying a \"type\" key; intermediate
 grouping attrsets and empty system subtrees do not."
+  (declare (pure t) (side-effect-free t))
   (and (hash-table-p node) (gethash "type" node)))
 
 (defun nixos--flake-flatten (json)
@@ -820,6 +822,7 @@ Recurses through every attrset: top-level output attrs, the
 optional system level, and any deeper grouping.  A node is a leaf
 iff it carries a \"type\" key; nodes without one are descended
 into rather than shown."
+  (declare (pure t) (side-effect-free t))
   (let ((table (make-hash-table :test 'equal)))
     (cl-labels ((walk (path node)
                   (cond
@@ -1241,6 +1244,7 @@ The root is the directory returned by `project-current' (via
 RESULT is the parsed JSON vector:
   [meta outPath version buildInputs nativeBuildInputs pname repository]
 Returns a cons cell (ALIST . \"\") on success, or (nil . ERROR-MSG)."
+  (declare (pure t) (side-effect-free t))
   (if (not (vectorp result))
       (cons nil (format "Unexpected JSON type (expected array): %S" result))
     (let ((meta (and (>= (length result) 1) (aref result 0)))
@@ -1661,6 +1665,7 @@ The `tabulated-list-revert-hook' of a table buffer calls this, so
   "Return the table group of option NAME.
 The group is the first dotted segment, so \"services.nginx.enable\"
 lands under \"services\".  A name without a dot gets its own group."
+  (declare (pure t) (side-effect-free t))
   (if-let* ((dot (string-search "." name)))
       (substring name 0 dot)
     nixos--option-group-other))
@@ -1670,6 +1675,7 @@ lands under \"services\".  A name without a dot gets its own group."
 ENTRIES has the shape of `tabulated-list-entries'.  GROUP-FUNCTION
 takes an entry ID and returns a group name.  Groups follow group
 name order, and `tabulated-list-print' sorts each group on its own."
+  (declare (pure t) (side-effect-free t))
   (let ((buckets (make-hash-table :test #'equal))
         names)
     (dolist (entry entries)
@@ -1686,6 +1692,7 @@ name order, and `tabulated-list-print' sorts each group on its own."
 (defun nixos--browse-table-cell-text (cell)
   "Return table CELL as a plain string.
 A cell holds a string or a cons of a label and button properties."
+  (declare (pure t) (side-effect-free t))
   (cond ((stringp cell) (substring-no-properties cell))
         ((consp cell) (format "%s" (car cell)))
         (t "")))
@@ -1693,6 +1700,7 @@ A cell holds a string or a cons of a label and button properties."
 (defun nixos--browse-table-longest-cell (entries column)
   "Return the width of the widest COLUMN cell of ENTRIES.
 ENTRIES has the shape of `tabulated-list-entries'."
+  (declare (pure t) (side-effect-free t))
   (let ((longest 0))
     (dolist (entry entries longest)
       (setq longest
@@ -1720,6 +1728,7 @@ column compares versions here instead of the strings it prints,
 so \"1.9\" lands before \"1.10\".  An entry without a version sorts
 after one that has a version.  Fall back to `string<' when
 `version<' rejects a value."
+  (declare (pure t) (side-effect-free t))
   (let ((a-version (nixos--browse-table-cell-text (aref (cadr a) 1)))
         (b-version (nixos--browse-table-cell-text (aref (cadr b) 1))))
     (cond ((and (string-empty-p a-version) (string-empty-p b-version)) nil)
@@ -1862,6 +1871,7 @@ result keeps every value when the columns already fit."
   "Return a copy of FORMAT with the widths of WIDTHS.
 `tabulated-list-format' may share constant lists across buffers, so
 copy a column before it changes."
+  (declare (pure t) (side-effect-free t))
   (apply #'vector
          (cl-mapcar (lambda (column width)
                       (let ((copy (copy-sequence column)))
@@ -1965,6 +1975,7 @@ header line holds no entry, so it adds no row."
   "Return table CELL as one line of plain text.
 A cell holds a string or a cons of a label and button properties.
 The face of a cell goes away with the properties."
+  (declare (pure t) (side-effect-free t))
   (let ((text (cond ((stringp cell) cell)
                     ((consp cell) (format "%s" (car cell)))
                     (t ""))))
@@ -2007,6 +2018,7 @@ escaped, so the table keeps its shape."
 
 (defun nixos--nix-attribute-segment (segment)
   "Return Nix attribute SEGMENT, quoted when it is no identifier."
+  (declare (pure t) (side-effect-free t))
   (if (string-match-p nixos--nix-identifier-re segment)
       (concat "." segment)
     (concat ".\""
@@ -2017,6 +2029,7 @@ escaped, so the table keeps its shape."
   "Return ROWS as a Nix list of attributes below `pkgs'.
 A segment that is no Nix identifier is quoted, so an attribute path
 with a leading digit stays valid."
+  (declare (pure t) (side-effect-free t))
   (concat "[\n"
           (mapconcat (lambda (row)
                        (concat "  pkgs"

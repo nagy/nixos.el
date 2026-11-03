@@ -561,7 +561,23 @@ buffer-local `nixos--browse-position` var.
 ### Functional purity
 
 Keep side-effecting code in interactive commands.  Internal functions
-should be pure where possible — makes them testable without mocking.
+should be pure where possible — makes it testable without mocking.
+
+A pure helper carries `(declare (pure t) (side-effect-free t))` as its
+first body form, so the byte compiler can fold or drop a call.  Add the
+declaration only when the result depends on the arguments alone: no
+buffer access, no cache read, and no defcustom read.  A helper that
+reads a user option takes neither declaration, because `pure` also
+promises that the same arguments always give the same value.
+
+```elisp
+(defun nixos--option-group-name (name)
+  "Return the table group of option NAME."
+  (declare (pure t) (side-effect-free t))
+  (if-let* ((dot (string-search "." name)))
+      (substring name 0 dot)
+    nixos--option-group-other))
+```
 
 ## Dependencies
 
