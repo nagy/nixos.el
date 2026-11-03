@@ -133,6 +133,15 @@ substituted with a Nix store path at build time."
   :type 'string
   :group 'nixos)
 
+(defcustom nixos-option-groups t
+  "Group the options table by top-level attribute.
+Non-nil splits the table into one block per first dotted segment
+(e.g. \"services\", \"programs\") and sorts inside each block.  A
+name without a dot lands in its own block.  Set it to nil for one
+flat table, then press \\[revert-buffer] in the table buffer."
+  :type 'boolean
+  :group 'nixos)
+
 
 
 ;;; Faces
@@ -1525,6 +1534,35 @@ the buffer with the original name.")
 
 ;;; Browse table helpers
 
+(defconst nixos--option-group-other "(top level)"
+  "Group title for an option name without a dot.")
+
+(defun nixos--option-group-name (name)
+  "Return the table group of option NAME.
+The group is the first dotted segment, so \"services.nginx.enable\"
+lands under \"services\".  A name without a dot gets its own group."
+  (if-let* ((dot (string-search "." name)))
+      (substring name 0 dot)
+    nixos--option-group-other))
+
+(defun nixos--group-entries (entries group-function)
+  "Split ENTRIES into `tabulated-list-groups' groups.
+ENTRIES has the shape of `tabulated-list-entries'.  GROUP-FUNCTION
+takes an entry ID and returns a group name.  Groups follow group
+name order, and `tabulated-list-print' sorts each group on its own."
+  (let ((buckets (make-hash-table :test #'equal))
+        names)
+    (dolist (entry entries)
+      (let ((group (funcall group-function (car entry))))
+        (unless (gethash group buckets)
+          (push group names)
+          (puthash group nil buckets))
+        (puthash group (cons entry (gethash group buckets)) buckets)))
+    (mapcar (lambda (group)
+              (cons (propertize group 'face 'nixos-field-label)
+                    (nreverse (gethash group buckets))))
+            (sort names #'string<))))
+
 (defun nixos--package-version-lessp (a b)
   "Return non-nil when the version of entry A sorts before entry B.
 A and B have the shape of `tabulated-list-entries'.  The Version
@@ -1546,9 +1584,10 @@ so \"1.9\" lands before \"1.10\".  Fall back to `string<' when
                                              columns sort-key
                                              extract-fields
                                              visit-fn url-fmt cache-fn
-                                             key-fn)
+                                             key-fn group-fn)
   "Define a tabulated-list browse mode for TYPE (a symbol, e.g. option).
-Internal use only."
+GROUP-FN, when non-nil, takes an entry ID and returns the group
+name of that entry.  Internal use only."
   (declare (indent 1))
   (let* ((typestr (symbol-name type))
          (mode (intern (format "nixos-browse-%ss-mode" typestr)))
@@ -1577,6 +1616,14 @@ Internal use only."
          (setq tabulated-list-format ,columns)
          (setq tabulated-list-padding 2)
          (setq tabulated-list-sort-key ',sort-key)
+         (setq-local tabulated-list-groups
+                     ,(if group-fn
+                          `(lambda ()
+                             (when nixos-option-groups
+                               (nixos--group-entries
+                                (,entries-fn nixos--browse-name-list)
+                                ,group-fn)))
+                        nil))
          (tabulated-list-init-header)
          (hl-line-mode 1)
          (setq-local revert-buffer-function #',refresh)
@@ -1673,6 +1720,7 @@ to filter the view in-place." typestr typestr mode-map visit search-url)
   :buffer-name "*NixOS Options*"
   :columns [("Option" 50 t) ("Type" 20 t) ("Description" 0 nil)]
   :sort-key ("Option" . nil)
+  :group-fn #'nixos--option-group-name
   :extract-fields ((or (gethash "type" data) "")
                    (propertize (or (nixos--trim-description
                                     (nixos--slurp-description data)) "")

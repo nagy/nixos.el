@@ -259,6 +259,13 @@ the enum instead.
   `1.9` sorts above `1.10`.  The built-in arrow and header click
   keep working, and the predicate reads the entry, not the
   buffer.
+- The options table groups rows by top-level attribute through
+  `tabulated-list-groups`.  `nixos--group-entries` buckets the
+  entries of `--entries`, and the group value is a closure, so
+  every print re-reads the buffer-local `nixos--browse-name-list`
+  filter.  A group header is a line with a nil ID, so
+  `--current-name` keeps signalling on it.  `nixos-option-groups`
+  nil turns grouping off at the next `g`.
 - The browse-table commands accept an optional `name-prefix` that
   personalizes the buffer name (e.g. `*NixOS Options: htop*`),
   allowing multiple searches to coexist.  When non-nil, the filtered

@@ -821,6 +821,61 @@ converted to strings by stripping the leading colon."
       (should (= (length entries) 1))
       (should (assoc "htop" entries)))))
 
+(ert-deftest nixos-option-group-name ()
+  "The group of an option is its first dotted segment."
+  (should (equal (nixos--option-group-name "services.nginx.enable")
+                 "services"))
+  (should (equal (nixos--option-group-name "boot.kernelPackages")
+                 "boot"))
+  (should (equal (nixos--option-group-name "enable")
+                 nixos--option-group-other)))
+
+(ert-deftest nixos-group-entries-buckets-and-orders ()
+  "`nixos--group-entries' buckets entries and sorts group names."
+  (let ((groups (nixos--group-entries
+                 '(("services.b" ["services.b" "b"])
+                   ("boot.a" ["boot.a" "a"])
+                   ("services.a" ["services.a" "a"]))
+                 #'nixos--option-group-name)))
+    (should (equal (mapcar (lambda (group)
+                             (substring-no-properties (car group)))
+                           groups)
+                   '("boot" "services")))
+    (should (equal (mapcar #'car (cdr (nth 1 groups)))
+                   '("services.b" "services.a")))))
+
+(ert-deftest nixos-browse-options-groups ()
+  "The options table prints a group header per top-level attribute."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.b.enable" :type "boolean" :description "b")
+       '("boot.a.enable" :type "boolean" :description "a"))
+    (with-temp-buffer
+      (nixos-browse-options-mode)
+      (setq tabulated-list-entries (nixos-browse-options--entries))
+      (tabulated-list-print)
+      (goto-char (point-min))
+      (should (equal (buffer-substring-no-properties
+                      (line-beginning-position) (line-end-position))
+                     "boot"))
+      (should-not (tabulated-list-get-id))
+      (forward-line 1)
+      (should (equal (tabulated-list-get-id) "boot.a.enable")))))
+
+(ert-deftest nixos-browse-options-groups-off ()
+  "`nixos-option-groups' nil prints one flat table."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.b.enable" :type "boolean" :description "b")
+       '("boot.a.enable" :type "boolean" :description "a"))
+    (let ((nixos-option-groups nil))
+      (with-temp-buffer
+        (nixos-browse-options-mode)
+        (setq tabulated-list-entries (nixos-browse-options--entries))
+        (tabulated-list-print)
+        (goto-char (point-min))
+        (should (equal (tabulated-list-get-id) "boot.a.enable"))))))
+
 (ert-deftest nixos-browse-options-filter ()
   "`nixos-browse-options--entries' filters by name-list."
   (nixos-test--with-options
