@@ -971,6 +971,18 @@ so a posn reads the row."
       (should (eq seen-action #'display-buffer-other-window))
       (should-not nixos-display-buffer-action))))
 
+(ert-deftest nixos-browse-table-other-window-mouse-action ()
+  "The mouse command opens the clicked row in another window."
+  (nixos-test--with-option-table
+    (let ((seen-action 'none))
+      (cl-letf (((symbol-function 'pop-to-buffer)
+                 (lambda (buf &optional action)
+                   (setq seen-action action)
+                   (set-buffer buf))))
+        (nixos-browse-table-other-window-mouse
+         (list 'mouse-2 (list (selected-window) (point) '(0 . 0) nil 0))))
+      (should (eq seen-action #'display-buffer-other-window)))))
+
 (ert-deftest nixos-browse-table-copy-name ()
   "`nixos-browse-table-copy-name' copies the entry name."
   (nixos-test--with-option-table

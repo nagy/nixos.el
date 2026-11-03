@@ -295,10 +295,13 @@ the enum instead.
 - `<mouse-2>` and `o` open the row in another window.  They bind
   `nixos-display-buffer-action` to `display-buffer-other-window`
   for that one call, and every display function passes the option
-  to `pop-to-buffer`.  `w` copies the entry name.
+  to `pop-to-buffer`.  The mouse command reads the entry type from
+  the clicked window's buffer, so a click in one table never uses
+  the other table's visit function.  `w` copies the entry name.
 - `context-menu-functions` carries `nixos-browse-table-context-menu`
   buffer-locally, guarded by `boundp`.  A menu click leaves point
-  alone, so each menu command wraps `nixos--browse-table-context-command`.
+  alone, so each menu command wraps `nixos--browse-table-context-command`,
+  which restores the buffer and moves point before it runs.
 - `nixos-browse-export-markdown` and `nixos-browse-export-nix` read
   the printed buffer, not the cache, so the export follows the
   current sort, filter and groups.  `nixos--browse-table-rows` walks

@@ -1660,10 +1660,17 @@ click from opening a detail buffer.  The middle button opens one."
                               #'display-buffer-other-window))
 
 (defun nixos-browse-table-other-window-mouse (event)
-  "Open the table row under the mouse click EVENT in another window."
+  "Open the table row under the mouse click EVENT in another window.
+The clicked window decides the entry type, so a click in an option
+table opens an option even when another table holds the selection."
   (interactive "e")
-  (nixos--browse-table-display (nixos--browse-table-name-at-event event)
-                              #'display-buffer-other-window))
+  (let* ((start (event-start event))
+         (window (posn-window start)))
+    (unless (windowp window)
+      (user-error "No entry under the mouse"))
+    (with-current-buffer (window-buffer window)
+      (nixos--browse-table-display (nixos--browse-table-name-at-event event)
+                                  #'display-buffer-other-window))))
 
 (defun nixos-browse-table-copy-name ()
   "Copy the name of the table entry at point to the kill ring."
@@ -1796,15 +1803,17 @@ The text pastes into `environment.systemPackages'."
   "m" #'nixos-browse-export-markdown
   "n" #'nixos-browse-export-nix)
 
-(defun nixos--browse-table-context-command (position function)
-  "Return a command that moves point to POSITION, then calls FUNCTION.
-A context menu click leaves point alone, so the command moves there
-first and the functions that read the row at point keep working."
+(defun nixos--browse-table-context-command (position buffer function)
+  "Return a command that moves point to POSITION in BUFFER, then calls FUNCTION.
+A context menu click leaves point alone, and the menu command can run
+in another buffer, so the command restores both first."
   (lambda ()
     (interactive)
-    (when (integer-or-marker-p position)
-      (goto-char (min position (point-max))))
-    (funcall function)))
+    (when (buffer-live-p buffer)
+      (with-current-buffer buffer
+        (when (integer-or-marker-p position)
+          (goto-char (min position (point-max))))
+        (funcall function)))))
 
 (defun nixos-browse-table-context-menu (menu click)
   "Fill MENU with the table commands for the row under CLICK.
@@ -1813,10 +1822,11 @@ stays.  A table mode adds this function to
 `context-menu-functions' buffer-locally."
   (let* ((start (event-start click))
          (position (posn-point start))
+         (buffer (current-buffer))
          (name (nixos--browse-table-name-at-event click)))
     (when (and name (derived-mode-p 'tabulated-list-mode))
       (let ((command (lambda (function)
-                       (nixos--browse-table-context-command position
+                       (nixos--browse-table-context-command position buffer
                                                            function))))
         (define-key-after menu [nixos-browse-table-open]
           (list 'menu-item "Open Details"
