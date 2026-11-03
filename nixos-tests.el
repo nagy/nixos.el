@@ -1146,6 +1146,96 @@ so a posn reads the row."
     (cancel-timer nixos--browse-table-fit-timer)
     (setq nixos--browse-table-fit-timer nil)))
 
+(ert-deftest nixos-browse-table-cell-text ()
+  "A cell reads as plain text whatever its shape."
+  (should (equal (nixos--browse-table-cell-text
+                  (propertize "htop" 'face 'bold))
+                 "htop"))
+  (should (equal (nixos--browse-table-cell-text (cons "label" '(help-echo "x")))
+                 "label"))
+  (should (equal (nixos--browse-table-cell-text nil) "")))
+
+(ert-deftest nixos-browse-table-longest-cell ()
+  "The widest cell of a column decides its content width."
+  (should (= 7 (nixos--browse-table-longest-cell
+                '(("a" ["a" "short"])
+                  ("b" ["b" "longest"]))
+                1))))
+
+(ert-deftest nixos-package-canonical-widths-version ()
+  "The Version column grows to its content and keeps other widths."
+  (with-temp-buffer
+    (nixos-browse-packages-mode)
+    (should (equal (nixos--package-canonical-widths
+                    '(("a" ["a" "1.0" "d"]))
+                    '(40 15 0))
+                   '(40 7 0)))
+    (should (equal (nixos--package-canonical-widths
+                    '(("a" ["a" "14.1.0-unstable-2024-01-01" "d"]))
+                    '(40 15 0))
+                   '(40 26 0)))
+    (should (equal (nixos--package-canonical-widths
+                    '(("a" ["a" "14.1.0-unstable-2024-01-01-from-a-very-long-branch" "d"]))
+                    '(40 15 0))
+                   (list 40 nixos-browse-table-version-max-width 0)))))
+
+(ert-deftest nixos-browse-table-fit-format-version-content ()
+  "A wide window gives the Version column its content width."
+  (nixos-test--with-packages
+      (nixos-test--packages-hash
+       '("legacyPackages.x86_64-linux.ripgrep"
+         :pname "ripgrep" :version "14.1.0-unstable-2024-01-01"
+         :description "search tool"))
+    (with-temp-buffer
+      (nixos-browse-packages-mode)
+      (nixos--browse-table-reload)
+      (cl-letf (((symbol-function 'window-width) (lambda (&optional _window) 140)))
+        (nixos--browse-table-fit-format))
+      (should (equal (nixos--browse-table-column-widths) '(40 26 0)))
+      (should (equal nixos--browse-table-canonical-widths '(40 26 0)))
+      (should (equal nixos--browse-table-declared-widths '(40 15 0))))))
+
+(ert-deftest nixos-browse-table-fit-format-narrow-version ()
+  "A narrow window still squeezes the content-fitted Version column."
+  (nixos-test--with-packages
+      (nixos-test--packages-hash
+       '("legacyPackages.x86_64-linux.ripgrep"
+         :pname "ripgrep" :version "14.1.0-unstable-2024-01-01"
+         :description "search tool"))
+    (with-temp-buffer
+      (nixos-browse-packages-mode)
+      (nixos--browse-table-reload)
+      (cl-letf (((symbol-function 'window-width) (lambda (&optional _window) 80)))
+        (nixos--browse-table-fit-format))
+      (should (equal (nixos--browse-table-column-widths) '(38 8 0))))))
+
+(ert-deftest nixos-package-version-lessp-empty-last ()
+  "An entry without a version sorts after one that has a version."
+  (let ((empty '("a" ["a" "" "d"]))
+        (full '("b" ["b" "1.0" "d"])))
+    (should-not (nixos--package-version-lessp empty full))
+    (should (nixos--package-version-lessp full empty))
+    (should-not (nixos--package-version-lessp empty empty))))
+
+(ert-deftest nixos-browse-packages-version-sort-empty-last ()
+  "A version sort puts the entries without a version last."
+  (nixos-test--with-packages
+      (nixos-test--packages-hash
+       '("legacyPackages.x86_64-linux.empty"
+         :pname "empty" :version "" :description "none")
+       '("legacyPackages.x86_64-linux.htop"
+         :pname "htop" :version "3.3.0" :description "viewer"))
+    (with-temp-buffer
+      (nixos-browse-packages-mode)
+      (setq tabulated-list-sort-key '("Version" . nil))
+      (nixos--browse-table-reload)
+      (tabulated-list-init-header)
+      (tabulated-list-print)
+      (goto-char (point-min))
+      (should (equal (tabulated-list-get-id) "htop"))
+      (forward-line 1)
+      (should (equal (tabulated-list-get-id) "empty")))))
+
 
 ;;; Export
 

@@ -265,9 +265,9 @@ the enum instead.
 - A column sorts by the cell string when its SORT element is `t`.
   A SORT element may also be a predicate over entries, and the
   package Version column uses `nixos--package-version-lessp` so
-  `1.9` sorts above `1.10`.  The built-in arrow and header click
-  keep working, and the predicate reads the entry, not the
-  buffer.
+  `1.9` sorts above `1.10` and an entry without a version sorts
+  last.  The built-in arrow and header click keep working, and the
+  predicate reads the entry, not the buffer.
 - The options table groups rows by top-level attribute through
   `tabulated-list-groups`.  `nixos--group-entries` buckets the
   entries of `--entries`, and the group value is a closure, so
@@ -341,6 +341,15 @@ the enum instead.
 - `{` and `}` go through `nixos--browse-table-resize-column`, which
   refuses a group header line: `tabulated-list-widen-current-column`
   reads the entry there and signals on the nil one.
+- The package table widens its Version column to the longest visible
+  version through the mode's `:width-fn`
+  (`nixos--package-canonical-widths`), capped by
+  `nixos-browse-table-version-max-width`.  The declared widths live
+  in `nixos--browse-table-declared-widths`, so a width function never
+  reads a fitted or a bookmarked value, and a narrow window still
+  squeezes the column afterwards.  `nixos--browse-table-cell-text`
+  is the one reader for a cell that may be a string or a `(LABEL .
+  PROPS)` cons.
 
 ### Bookmarks
 

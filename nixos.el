@@ -166,6 +166,13 @@ how much the columns before it must give up."
   :type 'integer
   :group 'nixos)
 
+(defcustom nixos-browse-table-version-max-width 28
+  "Widest Version column of a package table.
+The column grows to the longest visible version, up to this width,
+so an unstable suffix stays readable."
+  :type 'integer
+  :group 'nixos)
+
 
 
 ;;; Faces
@@ -1622,7 +1629,18 @@ filter.  The table modes set it.")
 (defvar-local nixos--browse-table-canonical-widths nil
   "Column widths that the table mode declares, before any window fit.
 A fit starts from these widths, so a wide window gets them back
-and a manual resize is undone by the next fit.")
+and a manual resize is undone by the next fit.  A bookmark may
+replace them with the widths that it saved.")
+
+(defvar-local nixos--browse-table-declared-widths nil
+  "Column widths of the table mode itself.
+Neither a fit nor a bookmark changes this list, so it stays the
+source for a width function.")
+
+(defvar-local nixos--browse-table-width-function nil
+  "Function that widens declared columns to their content.
+It takes the entry list and the declared widths, and returns the
+widths that a fit starts from.")
 
 (defvar-local nixos--browse-table-fit-timer nil
   "Pending timer that refits this table after a window resize.")
@@ -1665,19 +1683,51 @@ name order, and `tabulated-list-print' sorts each group on its own."
                     (nreverse (gethash group buckets))))
             (sort names #'string<))))
 
+(defun nixos--browse-table-cell-text (cell)
+  "Return table CELL as a plain string.
+A cell holds a string or a cons of a label and button properties."
+  (cond ((stringp cell) (substring-no-properties cell))
+        ((consp cell) (format "%s" (car cell)))
+        (t "")))
+
+(defun nixos--browse-table-longest-cell (entries column)
+  "Return the width of the widest COLUMN cell of ENTRIES.
+ENTRIES has the shape of `tabulated-list-entries'."
+  (let ((longest 0))
+    (dolist (entry entries longest)
+      (setq longest
+            (max longest
+                 (string-width
+                  (nixos--browse-table-cell-text
+                   (aref (cadr entry) column))))))))
+
+(defun nixos--package-canonical-widths (entries declared)
+  "Return DECLARED package widths with the Version column fitted.
+ENTRIES decides how wide the Version column must be, up to
+`nixos-browse-table-version-max-width'.  The header width is the
+floor, so the label never truncates."
+  (let ((widths (append declared nil)))
+    (setcar (nthcdr 1 widths)
+            (min nixos-browse-table-version-max-width
+                 (max (string-width (car (aref tabulated-list-format 1)))
+                      (nixos--browse-table-longest-cell entries 1))))
+    widths))
+
 (defun nixos--package-version-lessp (a b)
   "Return non-nil when the version of entry A sorts before entry B.
 A and B have the shape of `tabulated-list-entries'.  The Version
 column compares versions here instead of the strings it prints,
-so \"1.9\" lands before \"1.10\".  Fall back to `string<' when
+so \"1.9\" lands before \"1.10\".  An entry without a version sorts
+after one that has a version.  Fall back to `string<' when
 `version<' rejects a value."
-  (let ((a-version (aref (cadr a) 1))
-        (b-version (aref (cadr b) 1)))
-    (if (and (stringp a-version) (stringp b-version))
-        (condition-case nil
-            (version< a-version b-version)
-          (error (string< a-version b-version)))
-      (string< (format "%s" a-version) (format "%s" b-version)))))
+  (let ((a-version (nixos--browse-table-cell-text (aref (cadr a) 1)))
+        (b-version (nixos--browse-table-cell-text (aref (cadr b) 1))))
+    (cond ((and (string-empty-p a-version) (string-empty-p b-version)) nil)
+          ((string-empty-p a-version) nil)
+          ((string-empty-p b-version) t)
+          (t (condition-case nil
+                 (version< a-version b-version)
+               (error (string< a-version b-version)))))))
 
 (defun nixos--browse-table-print-entry (id columns)
   "Print one table row for ID and COLUMNS, then add its mouse help.
@@ -1690,10 +1740,7 @@ on a row without an entry, and such a row gets no properties."
     (tabulated-list-print-entry id columns)
     (when id
       (let* ((end (1- (point)))
-             (cell (aref columns 0))
-             (text (cond ((stringp cell) cell)
-                         ((consp cell) (format "%s" (car cell)))
-                         (t "")))
+             (text (nixos--browse-table-cell-text (aref columns 0)))
              (name-start (+ beg tabulated-list-padding))
              (name-end (min (+ name-start (string-width text)) end)))
         (add-text-properties beg end
@@ -1837,10 +1884,26 @@ when the current widths already equal the fitted ones."
       (unless (equal target current)
         (nixos--browse-table-format-widths tabulated-list-format target)))))
 
+(defun nixos--browse-table-base-widths ()
+  "Return the widths that a fit starts from.
+A mode may widen a declared column to its content through
+`nixos--browse-table-width-function', which takes the entry list
+and the declared widths."
+  (let ((declared (or nixos--browse-table-declared-widths
+                      nixos--browse-table-canonical-widths
+                      (nixos--browse-table-column-widths))))
+    (if nixos--browse-table-width-function
+        (funcall nixos--browse-table-width-function
+                 tabulated-list-entries declared)
+      declared)))
+
 (defun nixos--browse-table-fit-format ()
   "Fit `tabulated-list-format' to the selected window, without a reprint.
 The browse command runs this before its first print, because that
-print lands in the selected window."
+print lands in the selected window.  The fit also refreshes the
+base widths, so a content-fitted column follows the visible rows."
+  (setq-local nixos--browse-table-canonical-widths
+              (nixos--browse-table-base-widths))
   (when-let* ((fitted (nixos--browse-table-fit (selected-window))))
     (setq tabulated-list-format fitted)
     (tabulated-list-init-header)))
@@ -1907,7 +1970,7 @@ The face of a cell goes away with the properties."
                     (t ""))))
     (string-trim
      (replace-regexp-in-string "[ \t\n\r]+" " "
-                               (substring-no-properties text)))))
+                               (nixos--browse-table-cell-text text)))))
 
 (defun nixos--export-markdown (rows)
   "Return ROWS as a Markdown table.
@@ -2068,10 +2131,12 @@ stays.  A table mode adds this function to
                                              columns sort-key
                                              extract-fields
                                              visit-fn url-fmt cache-fn
-                                             key-fn group-fn)
+                                             key-fn group-fn width-fn)
   "Define a tabulated-list browse mode for TYPE (a symbol, e.g. option).
 GROUP-FN, when non-nil, takes an entry ID and returns the group
-name of that entry.  Internal use only."
+name of that entry.  WIDTH-FN, when non-nil, takes the entries and
+the declared column widths and returns the widths that a window
+fit starts from.  Internal use only."
   (declare (indent 1))
   (let* ((typestr (symbol-name type))
          (mode (intern (format "nixos-browse-%ss-mode" typestr)))
@@ -2119,6 +2184,9 @@ name of that entry.  Internal use only."
          (setq-local nixos--browse-table-canonical-widths
                      (mapcar (lambda (column) (nth 1 column))
                              (append tabulated-list-format nil)))
+         (setq-local nixos--browse-table-declared-widths
+                     nixos--browse-table-canonical-widths)
+         (setq-local nixos--browse-table-width-function ,width-fn)
          (setq-local nixos--browse-table-entries-function #',entries-fn)
          (add-hook 'tabulated-list-revert-hook
                    #'nixos--browse-table-reload nil t)
@@ -2262,6 +2330,7 @@ Add this alongside `nixos-thing-at-point-setup' in
             ("Version" 15 nixos--package-version-lessp)
             ("Description" 0 nil)]
   :sort-key ("Package" . nil)
+  :width-fn #'nixos--package-canonical-widths
   :extract-fields ((propertize (or (gethash "version" data) "")
                                'face 'nixos-version)
                    (propertize (or (nixos--trim-description
