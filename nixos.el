@@ -1327,7 +1327,36 @@ Intended for use as `bookmark-make-record-function' in
     `(,(format "NixOS %s: %s" label (or name-prefix "all"))
       (type . ,type)
       (name-prefix . ,name-prefix)
+      (sort-key . ,tabulated-list-sort-key)
+      (widths . ,(nixos--browse-table-column-widths))
       (handler . nixos--bookmark-jump))))
+
+(defun nixos--browse-table-restore-state (bookmark)
+  "Restore the sort key and column widths that BOOKMARK holds.
+A sort key that names no column and a width list that does not
+match the table are ignored, so an old bookmark still opens.
+Restoring a saved width makes it the width that a later fit starts
+from.  The table reprints only when a value lands."
+  (let ((sort-key (alist-get 'sort-key bookmark))
+        (widths (alist-get 'widths bookmark))
+        (columns (append tabulated-list-format nil))
+        (restored nil))
+    (when (derived-mode-p 'tabulated-list-mode)
+      (when (and (consp sort-key)
+                 (member (car sort-key) (mapcar #'car columns)))
+        (setq tabulated-list-sort-key (cons (car sort-key) (cdr sort-key))
+              restored t))
+      (when (and (listp widths)
+                 (cl-every #'integerp widths)
+                 (= (length widths) (length columns)))
+        (setq tabulated-list-format
+              (nixos--browse-table-format-widths
+               tabulated-list-format widths)
+              restored t)
+        (setq-local nixos--browse-table-canonical-widths widths))
+      (when restored
+        (tabulated-list-init-header)
+        (tabulated-list-print t)))))
 
 (defun nixos--bookmark-make-record ()
   "Create a bookmark record for the current browse buffer.
@@ -1358,10 +1387,12 @@ Called by the bookmark system."
         (cl-case type
           (option (nixos-browse-options
                    (and name-prefix (nixos--search-names 'option name-prefix))
-                   name-prefix))
+                   name-prefix)
+                  (nixos--browse-table-restore-state bookmark))
           (package (nixos-browse-packages
                     (and name-prefix (nixos--search-names 'package name-prefix))
-                    name-prefix))
+                    name-prefix)
+                   (nixos--browse-table-restore-state bookmark))
           (t (user-error "Unknown bookmark type %s" type)))
       ;; Detail bookmark.
       (cl-case type
@@ -1730,6 +1761,11 @@ reports that case as a user error."
   "Narrow the column under point by N."
   (interactive "p")
   (nixos--browse-table-resize-column (- n)))
+
+(defun nixos--browse-table-column-widths ()
+  "Return the current width of every table column."
+  (mapcar (lambda (column) (nth 1 column))
+          (append tabulated-list-format nil)))
 
 (defun nixos--browse-table-fit-widths (widths budget)
   "Return WIDTHS shrunk to fit BUDGET columns.

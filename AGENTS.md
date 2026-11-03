@@ -343,10 +343,16 @@ Two kinds of bookmarks are supported:
 
 **Table bookmarks** — set from `nixos-browse-options-mode` /
 `nixos-browse-packages-mode` buffers (filtered lists).  Record
-fields: `type`, `name-prefix`.  On reopen, the filtered
+fields: `type`, `name-prefix`, `sort-key` (a `(NAME . FLIP)` cons)
+and `widths` (one integer per column).  On reopen, the filtered
 `name-list` is re-derived from the live cache via
-`nixos--search-names`, so new matching options/packages
-appear automatically.  A nil `name-prefix` means "show all".
+`nixos--search-names`, so new matching options/packages appear
+automatically.  A nil `name-prefix` means "show all".
+`nixos--browse-table-restore-state` applies the sort key and the
+widths after the browse command returns; it ignores a sort key that
+names no column and a width list of the wrong length, and it makes
+the restored widths the base of a later fit.  The jump reprints once
+when a value lands.
 
 `nixos--search-names` is the single substring filter shared by
 table bookmarks and the `nixos-*-search:` Org link types.

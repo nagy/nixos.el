@@ -1671,13 +1671,39 @@ buffer."
   (with-temp-buffer
     (nixos-browse-options-mode)
     (setq-local nixos--browse-name-prefix "htop")
+    (setq tabulated-list-sort-key '("Type" . t))
     (let ((rec (nixos--browse-table-bookmark-make-record)))
       (should (stringp (car rec)))
       (should (string-match-p "htop" (car rec)))
       (should (eq (alist-get 'type rec) 'option))
       (should-not (alist-get 'name-list rec))
       (should (equal (alist-get 'name-prefix rec) "htop"))
+      (should (equal (alist-get 'sort-key rec) '("Type" . t)))
+      (should (equal (alist-get 'widths rec) '(50 20 0)))
       (should (eq (alist-get 'handler rec) 'nixos--bookmark-jump)))))
+
+(ert-deftest nixos-browse-table-bookmark-restore-state ()
+  "A table bookmark restores its sort key and column widths."
+  (let ((nixos-option-groups nil))
+    (with-temp-buffer
+      (nixos-browse-options-mode)
+      (nixos--browse-table-restore-state
+       '((sort-key . ("Type" . t))
+         (widths 30 12 0)))
+      (should (equal tabulated-list-sort-key '("Type" . t)))
+      (should (equal (nixos--browse-table-column-widths) '(30 12 0)))
+      (should (equal nixos--browse-table-canonical-widths '(30 12 0))))))
+
+(ert-deftest nixos-browse-table-bookmark-restore-ignores-stale ()
+  "A sort key or width list that does not fit the table is ignored."
+  (with-temp-buffer
+    (nixos-browse-options-mode)
+    (let ((sort-key tabulated-list-sort-key))
+      (nixos--browse-table-restore-state
+       '((sort-key . ("Gone" . nil))
+         (widths 30 12)))
+      (should (equal tabulated-list-sort-key sort-key))
+      (should (equal (nixos--browse-table-column-widths) '(50 20 0))))))
 
 (ert-deftest nixos-browse-table-bookmark-make-record-packages ()
   "Table bookmark record for packages without search term."
@@ -1723,6 +1749,25 @@ buffer."
                                 (name-prefix . nil)))
         (should-not called-names)
         (should-not called-prefix)))))
+
+(ert-deftest nixos-bookmark-jump-table-restores-state ()
+  "A table jump restores the saved sort key and widths."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable" :type "boolean" :description "foo"))
+    (let ((restored nil))
+      (cl-letf (((symbol-function 'switch-to-buffer)
+                 (lambda (buf &optional _action) (set-buffer buf)))
+                ((symbol-function 'nixos-browse-options)
+                 (lambda (&rest _ignored) nil))
+                ((symbol-function 'nixos--browse-table-restore-state)
+                 (lambda (bookmark) (setq restored bookmark))))
+        (nixos--bookmark-jump '((type . option)
+                                (name-prefix . nil)
+                                (sort-key . ("Type" . t))
+                                (widths 40 20 0)))
+        (should (equal (alist-get 'widths restored) '(40 20 0)))
+        (should (equal (alist-get 'sort-key restored) '("Type" . t)))))))
 
 
 
