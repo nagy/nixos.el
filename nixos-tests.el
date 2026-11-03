@@ -801,7 +801,6 @@ converted to strings by stripping the leading colon."
     (with-temp-buffer
       (nixos-browse-packages-mode)
       (setq tabulated-list-sort-key '("Version" . nil))
-      (setq tabulated-list-entries (nixos-browse-packages--entries))
       (tabulated-list-init-header)
       (tabulated-list-print)
       (goto-char (point-min))
@@ -820,6 +819,38 @@ converted to strings by stripping the leading colon."
     (let ((entries (nixos-browse-packages--entries '("htop"))))
       (should (= (length entries) 1))
       (should (assoc "htop" entries)))))
+
+(ert-deftest nixos-browse-table-entries-as-function ()
+  "The table modes read entries from a buffer-local function."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable" :type "boolean" :description "foo")
+       '("services.bar.enable" :type "string" :description "bar"))
+    (with-temp-buffer
+      (nixos-browse-options-mode)
+      (should (functionp tabulated-list-entries))
+      (should (eq revert-buffer-function #'tabulated-list-revert))
+      (should (= (length (funcall tabulated-list-entries)) 2))
+      (setq-local nixos--browse-name-list '("services.foo.enable"))
+      (should (equal (mapcar #'car (funcall tabulated-list-entries))
+                     '("services.foo.enable"))))))
+
+(ert-deftest nixos-browse-options-revert-keeps-filter ()
+  "`revert-buffer' re-reads the entries and keeps the filter."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable" :type "boolean" :description "foo")
+       '("services.bar.enable" :type "string" :description "bar"))
+    (let ((nixos-option-groups nil))
+      (with-temp-buffer
+        (nixos-browse-options-mode)
+        (setq-local nixos--browse-name-list '("services.foo.enable"))
+        (tabulated-list-print)
+        (revert-buffer)
+        (goto-char (point-min))
+        (should (equal (tabulated-list-get-id) "services.foo.enable"))
+        (forward-line 1)
+        (should (eobp))))))
 
 (ert-deftest nixos-option-group-name ()
   "The group of an option is its first dotted segment."
@@ -852,7 +883,6 @@ converted to strings by stripping the leading colon."
        '("boot.a.enable" :type "boolean" :description "a"))
     (with-temp-buffer
       (nixos-browse-options-mode)
-      (setq tabulated-list-entries (nixos-browse-options--entries))
       (tabulated-list-print)
       (goto-char (point-min))
       (should (equal (buffer-substring-no-properties
@@ -871,7 +901,6 @@ converted to strings by stripping the leading colon."
     (let ((nixos-option-groups nil))
       (with-temp-buffer
         (nixos-browse-options-mode)
-        (setq tabulated-list-entries (nixos-browse-options--entries))
         (tabulated-list-print)
         (goto-char (point-min))
         (should (equal (tabulated-list-get-id) "boot.a.enable"))))))

@@ -1594,7 +1594,6 @@ name of that entry.  Internal use only."
          (mode-map (intern (format "nixos-browse-%ss-mode-map" typestr)))
          (visit (intern (format "nixos-browse-%ss-visit" typestr)))
          (search-url (intern (format "nixos-browse-%ss-search-url" typestr)))
-         (refresh (intern (format "nixos-browse-%ss-refresh" typestr)))
          (cmd (intern (format "nixos-browse-%ss" typestr)))
          (entry-fn (intern (format "nixos-browse-%ss--entry" typestr)))
          (entries-fn (intern (format "nixos-browse-%ss--entries" typestr)))
@@ -1626,7 +1625,8 @@ name of that entry.  Internal use only."
                         nil))
          (tabulated-list-init-header)
          (hl-line-mode 1)
-         (setq-local revert-buffer-function #',refresh)
+         (setq-local tabulated-list-entries
+                     (lambda () (,entries-fn nixos--browse-name-list)))
          (setq-local bookmark-make-record-function
                      #'nixos--browse-table-bookmark-make-record))
 
@@ -1667,15 +1667,6 @@ appear in the list." typestr)
                (browse-url (format ,url-fmt (,current-name-fn))))
           nil)
 
-       (defun ,refresh (&rest _ignored)
-         ,(format "Refresh the %s table.
-Optional IGNORED args accommodate the `revert-buffer-function'
-calling convention." typestr)
-         (interactive)
-         (setq tabulated-list-entries
-               (,entries-fn nixos--browse-name-list))
-         (tabulated-list-print t))
-
        ;;;###autoload
        (defun ,cmd (&optional name-list name-prefix)
          ,(format "Display Nix %s in a browseable table.
@@ -1708,8 +1699,6 @@ to filter the view in-place." typestr typestr mode-map visit search-url)
                (setq-local default-directory
                            (or (nixos--ensure-nixpkgs-root)
                                default-directory))
-               (setq tabulated-list-entries
-                     (,entries-fn name-list))
                (tabulated-list-print))
              (switch-to-buffer buf)))))))
 

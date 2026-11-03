@@ -274,9 +274,13 @@ the enum instead.
   `refresh` (`g`) preserves the filter.
 - Mode map inherits from `tabulated-list-mode-map`
 - `hl-line-mode 1` enabled by default
-- Refresh goes through `revert-buffer-function` (set to the generated
-  refresh function); `g` works via `tabulated-list-mode`'s standard
-  `revert-buffer` binding and preserves the buffer-local filter.
+- `tabulated-list-entries` holds a closure, not a list.  The mode
+  installs `(lambda () (--entries nixos--browse-name-list))`, so
+  every print re-reads the buffer-local filter.
+- No generated refresh function exists.  `revert-buffer-function`
+  stays at the `tabulated-list-mode` default, so `g` calls
+  `tabulated-list-revert`, which prints and re-reads the entries
+  function.  Do not add a per-mode refresh defun back.
 - The modes set `bookmark-make-record-function` to
   `nixos--browse-table-bookmark-make-record` for saving filtered
   table views.
