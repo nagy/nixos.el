@@ -1035,6 +1035,91 @@ so a posn reads the row."
       (should (lookup-key filled [nixos-browse-table-refresh])))))
 
 
+;;; Column fitting
+
+(ert-deftest nixos-browse-table-fit-widths-wide ()
+  "A wide window keeps the canonical widths."
+  (let ((tabulated-list-padding 2))
+    (should (equal (nixos--browse-table-fit-widths '(50 20 0) 120)
+                   '(50 20 0)))
+    (should (equal (nixos--browse-table-fit-widths '(40 15 0) 120)
+                   '(40 15 0)))))
+
+(ert-deftest nixos-browse-table-fit-widths-narrow ()
+  "A narrow window shrinks the short column first, then the name."
+  (let ((tabulated-list-padding 2))
+    (should (equal (nixos--browse-table-fit-widths '(50 20 0) 80)
+                   '(38 8 0)))
+    (should (equal (nixos--browse-table-fit-widths '(50 20 0) 60)
+                   '(20 8 0)))))
+
+(ert-deftest nixos-browse-table-fit-widths-floors ()
+  "Very narrow windows stop at the configured floors."
+  (let ((tabulated-list-padding 2)
+        (nixos-browse-table-name-min-width 20)
+        (nixos-browse-table-description-min-width 30))
+    (should (equal (nixos--browse-table-fit-widths '(50 20 0) 20)
+                   '(20 8 0)))))
+
+(ert-deftest nixos-browse-table-fit-format-shrinks ()
+  "A narrow selected window shrinks the printed table columns."
+  (nixos-test--with-option-table
+    (should (equal (mapcar (lambda (column) (nth 1 column))
+                           (append tabulated-list-format nil))
+                   '(50 20 0)))
+    (nixos--browse-table-fit-format)
+    (should (equal (mapcar (lambda (column) (nth 1 column))
+                           (append tabulated-list-format nil))
+                   '(38 8 0)))))
+
+(ert-deftest nixos-browse-table-fit-is-idempotent ()
+  "A second fit at the same width changes nothing."
+  (nixos-test--with-option-table
+    (nixos--browse-table-fit-format)
+    (should-not (nixos--browse-table-fit (selected-window)))
+    (cl-letf (((symbol-function 'window-width) (lambda (&optional _window) 200)))
+      (should (equal (mapcar (lambda (column) (nth 1 column))
+                             (append (nixos--browse-table-fit (selected-window))
+                                     nil))
+                     '(50 20 0))))))
+
+(ert-deftest nixos-browse-table-resize-on-group-header ()
+  "A column resize refuses a group header line."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("boot.a.enable" :type "boolean" :description "a")
+       '("services.b.enable" :type "string" :description "b"))
+    (with-temp-buffer
+      (nixos-browse-options-mode)
+      (nixos--browse-table-reload)
+      (tabulated-list-print)
+      (goto-char (point-min))
+      (should-not (tabulated-list-get-entry))
+      (should-error (nixos--browse-table-resize-column 1) :type 'user-error)
+      (forward-line 1)
+      (should (tabulated-list-get-entry))
+      (nixos--browse-table-resize-column 1)
+      (should (= 51 (nth 1 (aref tabulated-list-format 0)))))))
+
+(ert-deftest nixos-browse-table-resize-keeps-filter-slot ()
+  "A resize changes only the width, never the column order."
+  (nixos-test--with-option-table
+    (nixos--browse-table-narrow-column 5)
+    (should (equal (mapcar #'car (append tabulated-list-format nil))
+                   '("Option" "Type" "Description")))))
+
+(ert-deftest nixos-browse-table-window-size-change-schedules ()
+  "A frame resize schedules one refit per buffer."
+  (nixos-test--with-option-table
+    (nixos--browse-table-window-size-changed (selected-frame))
+    (should (timerp nixos--browse-table-fit-timer))
+    (let ((timer nixos--browse-table-fit-timer))
+      (nixos--browse-table-window-size-changed (selected-frame))
+      (should (eq timer nixos--browse-table-fit-timer)))
+    (cancel-timer nixos--browse-table-fit-timer)
+    (setq nixos--browse-table-fit-timer nil)))
+
+
 ;;; Export
 
 (defmacro nixos-test--with-package-table (&rest body)

@@ -152,6 +152,20 @@ this option for one call."
   :type '(choice (const :tag "Selected window" nil) function)
   :group 'nixos)
 
+(defcustom nixos-browse-table-name-min-width 20
+  "Smallest name column width of a narrow table buffer.
+The table shrinks its columns when the window cannot hold them, and
+the name column stops here."
+  :type 'integer
+  :group 'nixos)
+
+(defcustom nixos-browse-table-description-min-width 30
+  "Width that the last table column keeps when the columns shrink.
+The last column takes the remaining space, so this value decides
+how much the columns before it must give up."
+  :type 'integer
+  :group 'nixos)
+
 
 
 ;;; Faces
@@ -1562,6 +1576,14 @@ The table modes set it, and the export commands read it.")
 It takes the buffer-local name-list filter, so a reload keeps the
 filter.  The table modes set it.")
 
+(defvar-local nixos--browse-table-canonical-widths nil
+  "Column widths that the table mode declares, before any window fit.
+A fit starts from these widths, so a wide window gets them back
+and a manual resize is undone by the next fit.")
+
+(defvar-local nixos--browse-table-fit-timer nil
+  "Pending timer that refits this table after a window resize.")
+
 (defun nixos--browse-table-reload ()
   "Rebuild `tabulated-list-entries' from the buffer-local filter.
 The `tabulated-list-revert-hook' of a table buffer calls this, so
@@ -1693,6 +1715,127 @@ table opens an option even when another table holds the selection."
                   (user-error "No entry on this line"))))
     (kill-new name)
     (message "Copied %s" name)))
+
+(defun nixos--browse-table-resize-column (n)
+  "Widen the column under point by N, or narrow it when N is negative.
+`tabulated-list-widen-current-column' reads the entry at point, so
+it signals on a group header line, which holds none.  This wrapper
+reports that case as a user error."
+  (interactive "p")
+  (unless (tabulated-list-get-entry)
+    (user-error "Put point on a row to resize a column"))
+  (tabulated-list-widen-current-column n))
+
+(defun nixos--browse-table-narrow-column (n)
+  "Narrow the column under point by N."
+  (interactive "p")
+  (nixos--browse-table-resize-column (- n)))
+
+(defun nixos--browse-table-fit-widths (widths budget)
+  "Return WIDTHS shrunk to fit BUDGET columns.
+WIDTHS holds one width per column, and the last column takes the
+remaining space, so `nixos-browse-table-description-min-width'
+bounds its share.  A column before the last shrinks to 8, and the
+name column stops at `nixos-browse-table-name-min-width'.  The
+result keeps every value when the columns already fit."
+  (let* ((last (1- (length widths)))
+         (fitted (append widths nil))
+         (fixed (lambda ()
+                  (let ((total tabulated-list-padding))
+                    (dotimes (index last)
+                      (setq total (+ total (nth index fitted) 1)))
+                    total)))
+         (over (- (+ (funcall fixed)
+                     nixos-browse-table-description-min-width)
+                  budget))
+         (shrink (lambda (index floor)
+                   (when (> over 0)
+                     (let* ((room (max (- (nth index fitted) floor) 0))
+                            (take (min room over)))
+                       (setcar (nthcdr index fitted)
+                               (- (nth index fitted) take))
+                       (setq over (- over take)))))))
+    (let ((index (1- last)))
+      (while (>= index 1)
+        (funcall shrink index 8)
+        (setq index (1- index))))
+    (when (> last 0)
+      (funcall shrink 0 nixos-browse-table-name-min-width))
+    fitted))
+
+(defun nixos--browse-table-format-widths (format widths)
+  "Return a copy of FORMAT with the widths of WIDTHS.
+`tabulated-list-format' may share constant lists across buffers, so
+copy a column before it changes."
+  (apply #'vector
+         (cl-mapcar (lambda (column width)
+                      (let ((copy (copy-sequence column)))
+                        (setcar (cdr copy) width)
+                        copy))
+                    (append format nil)
+                    widths)))
+
+(defun nixos--browse-table-fit (window)
+  "Return a `tabulated-list-format' that fits WINDOW, or nil.
+The fit starts from `nixos--browse-table-canonical-widths', so a
+resize in either direction reaches the right widths.  Return nil
+when the current widths already equal the fitted ones."
+  (when (and (windowp window) nixos--browse-table-canonical-widths)
+    (let* ((current (mapcar (lambda (column) (nth 1 column))
+                            (append tabulated-list-format nil)))
+           (target (nixos--browse-table-fit-widths
+                    nixos--browse-table-canonical-widths
+                    (window-width window))))
+      (unless (equal target current)
+        (nixos--browse-table-format-widths tabulated-list-format target)))))
+
+(defun nixos--browse-table-fit-format ()
+  "Fit `tabulated-list-format' to the selected window, without a reprint.
+The browse command runs this before its first print, because that
+print lands in the selected window."
+  (when-let* ((fitted (nixos--browse-table-fit (selected-window))))
+    (setq tabulated-list-format fitted)
+    (tabulated-list-init-header)))
+
+(defun nixos--browse-table-refit (window)
+  "Fit the columns of WINDOW to WINDOW, and reprint on a change."
+  (when (and (window-live-p window)
+             (buffer-live-p (window-buffer window)))
+    (with-current-buffer (window-buffer window)
+      (setq nixos--browse-table-fit-timer nil)
+      (when-let* ((fitted (nixos--browse-table-fit window)))
+        (setq tabulated-list-format fitted)
+        (tabulated-list-init-header)
+        (tabulated-list-print t)))))
+
+(defun nixos--browse-table-schedule-refit (buffer window)
+  "Refit BUFFER for WINDOW after the current redisplay.
+Redisplay runs the window size hook, so the reprint waits for a
+timer.  One pending timer per buffer is enough."
+  (when (and (buffer-live-p buffer)
+             (not (timerp (buffer-local-value
+                           'nixos--browse-table-fit-timer buffer))))
+    (with-current-buffer buffer
+      (setq nixos--browse-table-fit-timer
+            (run-at-time 0 nil #'nixos--browse-table-refit window)))))
+
+(defun nixos--browse-table-cancel-fit ()
+  "Cancel a pending resize refit of the current table buffer."
+  (when (timerp nixos--browse-table-fit-timer)
+    (cancel-timer nixos--browse-table-fit-timer)
+    (setq nixos--browse-table-fit-timer nil)))
+
+(defun nixos--browse-table-window-size-changed (frame)
+  "Refit the nixos tables shown in the windows of FRAME.
+A resize changes the space that the last column needs, and the
+other columns give way when the window is too narrow."
+  (dolist (window (window-list frame 'nomini))
+    (when (buffer-local-value 'nixos--browse-table-canonical-widths
+                              (window-buffer window))
+      (nixos--browse-table-schedule-refit (window-buffer window) window))))
+
+(add-hook 'window-size-change-functions
+          #'nixos--browse-table-window-size-changed)
 
 (defun nixos--browse-table-rows ()
   "Return the rows of the current table buffer in display order.
@@ -1899,6 +2042,8 @@ name of that entry.  Internal use only."
          "o" #'nixos-browse-table-other-window
          "w" #'nixos-browse-table-copy-name
          "e" nixos-browse-table-export-map
+         "{" #'nixos--browse-table-narrow-column
+         "}" #'nixos--browse-table-resize-column
          "<mouse-2>" #'nixos-browse-table-other-window-mouse
          "<follow-link>" #'nixos--browse-table-click-selects-row
          ,@(if url-fmt
@@ -1923,9 +2068,14 @@ name of that entry.  Internal use only."
                         nil))
          (tabulated-list-init-header)
          (hl-line-mode 1)
+         (setq-local nixos--browse-table-canonical-widths
+                     (mapcar (lambda (column) (nth 1 column))
+                             (append tabulated-list-format nil)))
          (setq-local nixos--browse-table-entries-function #',entries-fn)
          (add-hook 'tabulated-list-revert-hook
                    #'nixos--browse-table-reload nil t)
+         (add-hook 'kill-buffer-hook
+                   #'nixos--browse-table-cancel-fit nil t)
          (setq-local tabulated-list-printer
                      #'nixos--browse-table-print-entry)
          (setq-local nixos--browse-table-visit-function #',visit-fn)
@@ -2007,6 +2157,7 @@ to filter the view in-place." typestr typestr mode-map visit search-url)
                            (or (nixos--ensure-nixpkgs-root)
                                default-directory))
                (nixos--browse-table-reload)
+               (nixos--browse-table-fit-format)
                (tabulated-list-print))
              (switch-to-buffer buf)))))))
 

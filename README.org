@@ -33,6 +33,10 @@ reloads the table.  The =e= prefix exports the visible rows: =e m= writes a
 Markdown table and =e n= writes a package table as a Nix list of =pkgs=
 attributes.
 
+The table shrinks its columns when the window is narrow, so the
+description stays visible.  Use ={= and =}= to resize a column by hand;
+a frame resize fits the columns again.
+
 * License
 
 [[./LICENSE][AGPL3+]]

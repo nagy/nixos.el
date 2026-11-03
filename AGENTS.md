@@ -316,6 +316,22 @@ the enum instead.
   export quotes a segment that is no identifier.  Both live under the
   `e` prefix keymap `nixos-browse-table-export-map`, and each writes
   a `special-mode` buffer through `nixos--export-buffer`.
+- A table refits its columns to the window.
+  `nixos--browse-table-fit-widths` shrinks a middle column to 8 and
+  then the name column to `nixos-browse-table-name-min-width`, so the
+  last column keeps `nixos-browse-table-description-min-width`.  The
+  mode stores the declared widths in
+  `nixos--browse-table-canonical-widths`, and every fit starts there,
+  so a resize in either direction lands right.  The browse command
+  fits before its first print.  A frame resize schedules one refit
+  per buffer through `run-at-time`, because
+  `window-size-change-functions` runs inside redisplay, and the refit
+  reprints only when a width changed.  `tabulated-list-format` is
+  buffer-local, so one width serves every window, and a manual
+  `{`/`}` resize lasts until the next frame resize.
+- `{` and `}` go through `nixos--browse-table-resize-column`, which
+  refuses a group header line: `tabulated-list-widen-current-column`
+  reads the entry there and signals on the nil one.
 
 ### Bookmarks
 
