@@ -988,7 +988,92 @@ so a posn reads the row."
       (should (lookup-key filled [nixos-browse-table-open]))
       (should (lookup-key filled [nixos-browse-table-open-other-window]))
       (should (lookup-key filled [nixos-browse-table-copy-name]))
+      (should (lookup-key filled [nixos-browse-table-export-markdown]))
+      (should (lookup-key filled [nixos-browse-table-export-nix]))
       (should (lookup-key filled [nixos-browse-table-refresh])))))
+
+
+;;; Export
+
+(defmacro nixos-test--with-package-table (&rest body)
+  "Evaluate BODY in a printed package table buffer.
+Point sits on the first row, and the selected window shows the
+buffer."
+  (declare (indent 0))
+  `(nixos-test--with-packages
+       (nixos-test--packages-hash
+        '("legacyPackages.x86_64-linux.htop"
+          :pname "htop" :version "3.0" :description "viewer")
+        '("legacyPackages.x86_64-linux.7off"
+          :pname "7off" :version "1.0" :description "odd"))
+     (with-temp-buffer
+       (nixos-browse-packages-mode)
+       (tabulated-list-print)
+       (goto-char (point-min))
+       ,@body)))
+
+(ert-deftest nixos-export-cell-plain-text ()
+  "`nixos--export-cell' strips properties and flattens whitespace."
+  (should (equal (nixos--export-cell
+                  (propertize "two  lines\nhere" 'face 'bold))
+                 "two lines here"))
+  (should (equal (nixos--export-cell (cons "label" '(help-echo "x")))
+                 "label"))
+  (should (equal (nixos--export-cell nil) "")))
+
+(ert-deftest nixos-export-markdown-table ()
+  "`nixos--export-markdown' writes the format columns and every row."
+  (nixos-test--with-package-table
+    (let ((text (nixos--export-markdown (nixos--browse-table-rows))))
+      (should (string-prefix-p "| Package | Version | Description |\n" text))
+      (should (string-match-p "^| --- | --- | --- |$" text))
+      (should (string-match-p "^| htop | 3\\.0 | viewer |$" text))
+      (should (string-match-p "^| 7off | 1\\.0 | odd |$" text)))))
+
+(ert-deftest nixos-export-markdown-escapes-pipe ()
+  "A pipe in a cell is escaped, so the table keeps its shape."
+  (nixos-test--with-option-table
+    (let ((rows (nixos--browse-table-rows)))
+      (setcdr (car rows) (vector "a|b" "type" "desc"))
+      (should (string-search "a\\|b" (nixos--export-markdown rows))))))
+
+(ert-deftest nixos-export-nix-attributes ()
+  "`nixos--export-nix' quotes a segment that is no identifier."
+  (should (equal (nixos--export-nix
+                  '(("htop" . ["htop" "3.0" "viewer"])
+                    ("chickenPackages_5.chickenEggs.7off" . ["x" "" ""])))
+                 (concat "[\n"
+                         "  pkgs.htop\n"
+                         "  pkgs.chickenPackages_5.chickenEggs.\"7off\"\n"
+                         "]\n"))))
+
+(ert-deftest nixos-browse-export-markdown-buffer ()
+  "The markdown command fills a read-only buffer."
+  (nixos-test--with-package-table
+    (let ((buffer nil))
+      (cl-letf (((symbol-function 'pop-to-buffer)
+                 (lambda (buf &optional _action) (setq buffer buf)))
+                ((symbol-function 'nixos--ensure-nixpkgs-root) (lambda () nil)))
+        (nixos-browse-export-markdown))
+      (should buffer)
+      (with-current-buffer buffer
+        (should (derived-mode-p 'special-mode))
+        (should buffer-read-only)
+        (should (string-match-p "^| Package |" (buffer-string)))))))
+
+(ert-deftest nixos-browse-export-nix-buffer ()
+  "The Nix command writes a package list and refuses an option table."
+  (nixos-test--with-package-table
+    (let ((buffer nil))
+      (cl-letf (((symbol-function 'pop-to-buffer)
+                 (lambda (buf &optional _action) (setq buffer buf)))
+                ((symbol-function 'nixos--ensure-nixpkgs-root) (lambda () nil)))
+        (nixos-browse-export-nix))
+      (with-current-buffer buffer
+        (should (string-match-p "pkgs.htop" (buffer-string)))
+        (should (string-match-p "pkgs.\"7off\"" (buffer-string))))))
+  (nixos-test--with-option-table
+    (should-error (nixos-browse-export-nix) :type 'user-error)))
 
 
 ;;; Embark

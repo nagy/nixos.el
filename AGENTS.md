@@ -299,6 +299,14 @@ the enum instead.
 - `context-menu-functions` carries `nixos-browse-table-context-menu`
   buffer-locally, guarded by `boundp`.  A menu click leaves point
   alone, so each menu command wraps `nixos--browse-table-context-command`.
+- `nixos-browse-export-markdown` and `nixos-browse-export-nix` read
+  the printed buffer, not the cache, so the export follows the
+  current sort, filter and groups.  `nixos--browse-table-rows` walks
+  the lines and skips a group header, which holds no entry.  The
+  Markdown export escapes a pipe and strips text properties; the Nix
+  export quotes a segment that is no identifier.  Both live under the
+  `e` prefix keymap `nixos-browse-table-export-map`, and each writes
+  a `special-mode` buffer through `nixos--export-buffer`.
 
 ### Bookmarks
 

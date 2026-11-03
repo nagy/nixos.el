@@ -1553,6 +1553,10 @@ the buffer with the original name.")
 `nixos-option' for an option table, `nixos-package' for a package
 table.  The table modes set it.")
 
+(defvar-local nixos--browse-table-type nil
+  "Type of the entries in this table buffer: `option' or `package'.
+The table modes set it, and the export commands read it.")
+
 (defconst nixos--option-group-other "(top level)"
   "Group title for an option name without a dot.")
 
@@ -1669,6 +1673,129 @@ click from opening a detail buffer.  The middle button opens one."
     (kill-new name)
     (message "Copied %s" name)))
 
+(defun nixos--browse-table-rows ()
+  "Return the rows of the current table buffer in display order.
+Each row is a cons of its entry ID and its column vector.  A group
+header line holds no entry, so it adds no row."
+  (save-excursion
+    (goto-char (point-min))
+    (let (rows)
+      (while (not (eobp))
+        (when-let* ((columns (tabulated-list-get-entry)))
+          (push (cons (tabulated-list-get-id) columns) rows))
+        (forward-line 1))
+      (nreverse rows))))
+
+(defun nixos--export-cell (cell)
+  "Return table CELL as one line of plain text.
+A cell holds a string or a cons of a label and button properties.
+The face of a cell goes away with the properties."
+  (let ((text (cond ((stringp cell) cell)
+                    ((consp cell) (format "%s" (car cell)))
+                    (t ""))))
+    (string-trim
+     (replace-regexp-in-string "[ \t\n\r]+" " "
+                               (substring-no-properties text)))))
+
+(defun nixos--export-markdown (rows)
+  "Return ROWS as a Markdown table.
+ROWS comes from `nixos--browse-table-rows'.  The header names the
+columns of `tabulated-list-format'.  A pipe inside a cell is
+escaped, so the table keeps its shape."
+  (let* ((labels (mapcar (lambda (column)
+                           (nixos--export-cell
+                            (if (consp column) (car column) column)))
+                         (append tabulated-list-format nil)))
+         (line (lambda (cells)
+                 (concat "| "
+                         (mapconcat (lambda (text)
+                                      (string-replace "|" "\\|" text))
+                                    cells " | ")
+                         " |")))
+         (header (funcall line labels))
+         (separator (concat "|"
+                            (mapconcat (lambda (_label) " --- |")
+                                       labels "")))
+         (body '()))
+    (dolist (row rows)
+      (push (funcall line (mapcar #'nixos--export-cell
+                                  (append (cdr row) nil)))
+            body))
+    (concat (mapconcat #'identity
+                       (cons header (cons separator (nreverse body)))
+                       "\n")
+            "\n")))
+
+(defconst nixos--nix-identifier-re
+  "\\`[a-zA-Z_][a-zA-Z0-9_'-]*\\'"
+  "Regexp matching one bare Nix attribute name.")
+
+(defun nixos--nix-attribute-segment (segment)
+  "Return Nix attribute SEGMENT, quoted when it is no identifier."
+  (if (string-match-p nixos--nix-identifier-re segment)
+      (concat "." segment)
+    (concat ".\""
+            (replace-regexp-in-string "[\\\"]" "\\\\\\&" segment)
+            "\"")))
+
+(defun nixos--export-nix (rows)
+  "Return ROWS as a Nix list of attributes below `pkgs'.
+A segment that is no Nix identifier is quoted, so an attribute path
+with a leading digit stays valid."
+  (concat "[\n"
+          (mapconcat (lambda (row)
+                       (concat "  pkgs"
+                               (mapconcat #'nixos--nix-attribute-segment
+                                          (split-string (car row) "\\.")
+                                          "")))
+                     rows "\n")
+          "\n]\n"))
+
+(defun nixos--export-buffer (label text)
+  "Show TEXT in a read-only export buffer named for LABEL.
+A repeat export of the same format and table reuses the buffer."
+  (let ((buffer (get-buffer-create
+                 (format "*Nix %s export: %s*"
+                         (or nixos--browse-table-type 'table) label))))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert text)
+        (goto-char (point-min))
+        (special-mode)
+        (setq-local default-directory
+                    (or (nixos--ensure-nixpkgs-root)
+                        default-directory))
+        (set-buffer-modified-p nil)))
+    (pop-to-buffer buffer nixos-display-buffer-action)))
+
+(defun nixos-browse-export-markdown ()
+  "Export the visible table rows to a read-only Markdown buffer.
+The export follows the current sort, the filter and the groups."
+  (interactive)
+  (unless (derived-mode-p 'tabulated-list-mode)
+    (user-error "Not a nixos table buffer"))
+  (nixos--export-buffer "markdown"
+                        (nixos--export-markdown
+                         (nixos--browse-table-rows))))
+
+(defun nixos-browse-export-nix ()
+  "Export the visible package rows as a Nix list below `pkgs'.
+The text pastes into `environment.systemPackages'."
+  (interactive)
+  (unless (derived-mode-p 'tabulated-list-mode)
+    (user-error "Not a nixos table buffer"))
+  (unless (eq nixos--browse-table-type 'package)
+    (user-error "Only a package table exports as a Nix list"))
+  (nixos--export-buffer "nix"
+                        (nixos--export-nix
+                         (nixos--browse-table-rows))))
+
+(defvar-keymap nixos-browse-table-export-map
+  :doc "Export keymap for nixos table buffers."
+  "m" #'nixos-browse-export-markdown
+  "n" #'nixos-browse-export-nix)
+
 (defun nixos--browse-table-context-command (position function)
   "Return a command that moves point to POSITION, then calls FUNCTION.
 A context menu click leaves point alone, so the command moves there
@@ -1706,6 +1833,13 @@ stays.  A table mode adds this function to
         (define-key-after menu [nixos-browse-table-copy-name]
           (list 'menu-item "Copy Name"
                 (funcall command #'nixos-browse-table-copy-name)))
+        (define-key-after menu [nixos-browse-table-export-markdown]
+          (list 'menu-item "Export as Markdown"
+                #'nixos-browse-export-markdown))
+        (define-key-after menu [nixos-browse-table-export-nix]
+          (list 'menu-item "Export as Nix List"
+                #'nixos-browse-export-nix
+                :enable (eq nixos--browse-table-type 'package)))
         (define-key-after menu [nixos-browse-table-refresh-separator]
           menu-bar-separator)
         (define-key-after menu [nixos-browse-table-refresh]
@@ -1740,6 +1874,7 @@ name of that entry.  Internal use only."
          "RET" #',visit
          "o" #'nixos-browse-table-other-window
          "w" #'nixos-browse-table-copy-name
+         "e" nixos-browse-table-export-map
          "<mouse-2>" #'nixos-browse-table-other-window-mouse
          "<follow-link>" #'nixos--browse-table-click-selects-row
          ,@(if url-fmt
@@ -1769,6 +1904,7 @@ name of that entry.  Internal use only."
          (setq-local tabulated-list-printer
                      #'nixos--browse-table-print-entry)
          (setq-local nixos--browse-table-visit-function #',visit-fn)
+         (setq-local nixos--browse-table-type ',type)
          (setq-local bookmark-make-record-function
                      #'nixos--browse-table-bookmark-make-record)
          (when (boundp 'context-menu-functions)
@@ -1821,6 +1957,7 @@ appear in the list." typestr)
 \\[%s] on an entry to view full details,
 \\[%s] to open on search.nixos.org,
 \\[revert-buffer] to reload the data.
+The `e' prefix exports the visible rows.
 
 When NAME-LIST is non-nil (a list of names), only those entries
 are displayed.  This is used by Embark export.
