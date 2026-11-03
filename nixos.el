@@ -82,6 +82,7 @@
 ;; Forward-declare; nix-mode is optional at compile time.
 (defvar nix-instantiate-executable)
 (defvar nix-executable)
+(declare-function display-buffer-other-window "window")
 
 (defgroup nixos nil
   "Browse NixOS options and packages."
@@ -140,6 +141,15 @@ Non-nil splits the table into one block per first dotted segment
 name without a dot lands in its own block.  Set it to nil for one
 flat table, then press \\[revert-buffer] in the table buffer."
   :type 'boolean
+  :group 'nixos)
+
+(defcustom nixos-display-buffer-action nil
+  "Display action for nixos detail buffers.
+nil keeps the `pop-to-buffer' default, which selects the new
+window.  Set it to `display-buffer-other-window' to open details in
+another window.  The table mouse and context menu commands bind
+this option for one call."
+  :type '(choice (const :tag "Selected window" nil) function)
   :group 'nixos)
 
 
@@ -606,7 +616,7 @@ as an empty value) or a string; optional FACE is applied to it."
           (setq default-directory root))
         (goto-char (point-min))
         (set-buffer-modified-p nil)))
-    (pop-to-buffer buf)))
+    (pop-to-buffer buf nixos-display-buffer-action)))
 
 (defun nixos--display-package (name info &optional source)
   "Create a formatted detail buffer for Nix package NAME with INFO.
@@ -721,7 +731,7 @@ installed Nix package."
                   (insert "\n"))))))
         (goto-char (point-min))
         (set-buffer-modified-p nil)))
-    (pop-to-buffer buf)))
+    (pop-to-buffer buf nixos-display-buffer-action)))
 
 
 ;;; Flakes
@@ -759,7 +769,7 @@ are unavailable here."
           (nixos--field "Flake:" (nixos--abbreviate-path ref)))
         (goto-char (point-min))
         (set-buffer-modified-p nil)))
-    (pop-to-buffer buf)))
+    (pop-to-buffer buf nixos-display-buffer-action)))
 
 (defun nixos--flake-leaf-p (node)
   "Return non-nil if NODE is a flake show leaf.
@@ -1120,7 +1130,7 @@ node's detail buffer via `nixos--display-flake'."
                 (insert "\n")))))
         (goto-char (point-min))
         (set-buffer-modified-p nil)))
-    (pop-to-buffer buf)))
+    (pop-to-buffer buf nixos-display-buffer-action)))
 ;;;###autoload
 (defun nixos-flake (&optional flake-ref)
   "Show the outputs of a Nix flake in a detail buffer.
@@ -1534,6 +1544,15 @@ the buffer with the original name.")
 
 ;;; Browse table helpers
 
+(defconst nixos--browse-table-mouse-help
+  "mouse-2: open in another window, mouse-3: menu"
+  "Help text that every table row carries.")
+
+(defvar-local nixos--browse-table-visit-function nil
+  "Function that displays the detail buffer of one table entry.
+`nixos-option' for an option table, `nixos-package' for a package
+table.  The table modes set it.")
+
 (defconst nixos--option-group-other "(top level)"
   "Group title for an option name without a dot.")
 
@@ -1577,6 +1596,122 @@ so \"1.9\" lands before \"1.10\".  Fall back to `string<' when
           (error (string< a-version b-version)))
       (string< (format "%s" a-version) (format "%s" b-version)))))
 
+(defun nixos--browse-table-print-entry (id columns)
+  "Print one table row for ID and COLUMNS, then add its mouse help.
+`tabulated-list-print' calls this through `tabulated-list-printer'
+for every entry.  Group header lines bypass it and stay plain.  The
+whole row explains the mouse, and the name cell carries
+`mouse-face', so the pointer highlights the name alone.  ID is nil
+on a row without an entry, and such a row gets no properties."
+  (let ((beg (point)))
+    (tabulated-list-print-entry id columns)
+    (when id
+      (let* ((end (1- (point)))
+             (cell (aref columns 0))
+             (text (cond ((stringp cell) cell)
+                         ((consp cell) (format "%s" (car cell)))
+                         (t "")))
+             (name-start (+ beg tabulated-list-padding))
+             (name-end (min (+ name-start (string-width text)) end)))
+        (add-text-properties beg end
+                             (list 'help-echo
+                                   nixos--browse-table-mouse-help))
+        (when (< name-start name-end)
+          (add-text-properties name-start name-end
+                               '(mouse-face highlight)))))))
+
+(defun nixos--browse-table-click-selects-row (&rest _ignored)
+  "Return nil, so one click selects a row and follows no link.
+`tabulated-list-mode-map' binds `follow-link' to `mouse-face', and
+that value turns a click on a marked cell into a `mouse-2' event.
+The name cell carries `mouse-face', so this predicate keeps the
+click from opening a detail buffer.  The middle button opens one."
+  nil)
+
+(defun nixos--browse-table-name-at-event (event)
+  "Return the entry name of the table row under the mouse click EVENT."
+  (let* ((start (event-start event))
+         (window (posn-window start))
+         (position (posn-point start)))
+    (when (and (windowp window) (integer-or-marker-p position))
+      (with-current-buffer (window-buffer window)
+        (save-excursion
+          (goto-char position)
+          (tabulated-list-get-id))))))
+
+(defun nixos--browse-table-display (name action)
+  "Display the detail buffer of table entry NAME with display ACTION."
+  (unless (and (derived-mode-p 'tabulated-list-mode)
+               nixos--browse-table-visit-function)
+    (user-error "Not a nixos table buffer"))
+  (unless name
+    (user-error "No entry on this line"))
+  (let ((nixos-display-buffer-action action))
+    (funcall nixos--browse-table-visit-function name)))
+
+(defun nixos-browse-table-other-window ()
+  "Open the detail buffer of the entry at point in another window."
+  (interactive)
+  (nixos--browse-table-display (tabulated-list-get-id)
+                              #'display-buffer-other-window))
+
+(defun nixos-browse-table-other-window-mouse (event)
+  "Open the table row under the mouse click EVENT in another window."
+  (interactive "e")
+  (nixos--browse-table-display (nixos--browse-table-name-at-event event)
+                              #'display-buffer-other-window))
+
+(defun nixos-browse-table-copy-name ()
+  "Copy the name of the table entry at point to the kill ring."
+  (interactive)
+  (let ((name (or (tabulated-list-get-id)
+                  (user-error "No entry on this line"))))
+    (kill-new name)
+    (message "Copied %s" name)))
+
+(defun nixos--browse-table-context-command (position function)
+  "Return a command that moves point to POSITION, then calls FUNCTION.
+A context menu click leaves point alone, so the command moves there
+first and the functions that read the row at point keep working."
+  (lambda ()
+    (interactive)
+    (when (integer-or-marker-p position)
+      (goto-char (min position (point-max))))
+    (funcall function)))
+
+(defun nixos-browse-table-context-menu (menu click)
+  "Fill MENU with the table commands for the row under CLICK.
+A click below the last row adds nothing, so the plain Emacs menu
+stays.  A table mode adds this function to
+`context-menu-functions' buffer-locally."
+  (let* ((start (event-start click))
+         (position (posn-point start))
+         (name (nixos--browse-table-name-at-event click)))
+    (when (and name (derived-mode-p 'tabulated-list-mode))
+      (let ((command (lambda (function)
+                       (nixos--browse-table-context-command position
+                                                           function))))
+        (define-key-after menu [nixos-browse-table-open]
+          (list 'menu-item "Open Details"
+                (funcall command
+                         (lambda ()
+                           (nixos--browse-table-display
+                            name nixos-display-buffer-action)))))
+        (define-key-after menu [nixos-browse-table-open-other-window]
+          (list 'menu-item "Open in Other Window"
+                (funcall command
+                         (lambda ()
+                           (nixos--browse-table-display
+                            name #'display-buffer-other-window)))))
+        (define-key-after menu [nixos-browse-table-copy-name]
+          (list 'menu-item "Copy Name"
+                (funcall command #'nixos-browse-table-copy-name)))
+        (define-key-after menu [nixos-browse-table-refresh-separator]
+          menu-bar-separator)
+        (define-key-after menu [nixos-browse-table-refresh]
+          '(menu-item "Refresh" revert-buffer))))
+    menu))
+
 
 ;;; Tabulated Browse Mode (shared macro)
 
@@ -1603,6 +1738,10 @@ name of that entry.  Internal use only."
          :doc ,(format "Keymap for `%s'." mode)
          :parent tabulated-list-mode-map
          "RET" #',visit
+         "o" #'nixos-browse-table-other-window
+         "w" #'nixos-browse-table-copy-name
+         "<mouse-2>" #'nixos-browse-table-other-window-mouse
+         "<follow-link>" #'nixos--browse-table-click-selects-row
          ,@(if url-fmt
                `("b"   #',search-url)
              nil))
@@ -1627,8 +1766,14 @@ name of that entry.  Internal use only."
          (hl-line-mode 1)
          (setq-local tabulated-list-entries
                      (lambda () (,entries-fn nixos--browse-name-list)))
+         (setq-local tabulated-list-printer
+                     #'nixos--browse-table-print-entry)
+         (setq-local nixos--browse-table-visit-function #',visit-fn)
          (setq-local bookmark-make-record-function
-                     #'nixos--browse-table-bookmark-make-record))
+                     #'nixos--browse-table-bookmark-make-record)
+         (when (boundp 'context-menu-functions)
+           (add-hook 'context-menu-functions
+                     #'nixos-browse-table-context-menu nil t)))
 
        (defun ,entry-fn (name data)
          ,(format "Return a `tabulated-list' entry for %s NAME with DATA." typestr)

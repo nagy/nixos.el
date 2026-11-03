@@ -284,6 +284,21 @@ the enum instead.
 - The modes set `bookmark-make-record-function` to
   `nixos--browse-table-bookmark-make-record` for saving filtered
   table views.
+- `tabulated-list-printer` is `nixos--browse-table-print-entry`.
+  It paints `help-echo` on the whole row and `mouse-face` on the
+  name cell alone.  A group header line bypasses the printer, so
+  it stays plain.
+- `<follow-link>` is `nixos--browse-table-click-selects-row`, which
+  returns nil.  With the `tabulated-list-mode-map` default
+  (`mouse-face`), the highlighted name would turn one click into a
+  `mouse-2` event and open a detail buffer.
+- `<mouse-2>` and `o` open the row in another window.  They bind
+  `nixos-display-buffer-action` to `display-buffer-other-window`
+  for that one call, and every display function passes the option
+  to `pop-to-buffer`.  `w` copies the entry name.
+- `context-menu-functions` carries `nixos-browse-table-context-menu`
+  buffer-locally, guarded by `boundp`.  A menu click leaves point
+  alone, so each menu command wraps `nixos--browse-table-context-command`.
 
 ### Bookmarks
 

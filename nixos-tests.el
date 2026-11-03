@@ -31,6 +31,7 @@
 (defvar nix-instantiate-executable)
 (defvar nix-executable)
 (declare-function nix-mode "nix-mode")
+(declare-function display-buffer-other-window "window")
 
 
 ;;; Helpers
@@ -261,7 +262,7 @@ converted to strings by stripping the leading colon."
             (write-region "" nil expected-file)
             (let ((nixos--nixpkgs-root tmp-root))
               (cl-letf (((symbol-function 'pop-to-buffer)
-                         (lambda (buf) (set-buffer buf))))
+                         (lambda (buf &optional _action) (set-buffer buf))))
                 (nixos--display-option
                  "services.foo.enable"
                  (gethash "services.foo.enable" nixos--options-cache))
@@ -330,7 +331,7 @@ converted to strings by stripping the leading colon."
        '("services.foo.enable" :description "Enable foo"))
     (let ((displayed nil))
       (cl-letf (((symbol-function 'pop-to-buffer)
-                 (lambda (buf) (setq displayed buf))))
+                 (lambda (buf &optional _action) (setq displayed buf))))
         (nixos-option "services.foo.enable")
         (should displayed)
         (should (buffer-live-p displayed))
@@ -355,7 +356,7 @@ converted to strings by stripping the leading colon."
          :description "process viewer"))
     (let ((displayed nil))
       (cl-letf (((symbol-function 'pop-to-buffer)
-                 (lambda (buf) (setq displayed buf)))
+                 (lambda (buf &optional _action) (setq displayed buf)))
                 ;; Ensure nix-instantiate doesn't run.
                 ((symbol-function 'nixos--package-meta)
                  (lambda (_) nil)))
@@ -378,7 +379,7 @@ converted to strings by stripping the leading colon."
       (puthash "version" "3.5.1" meta-ht)
       (puthash "homepage" "https://htop.dev/" meta-ht)
       (cl-letf (((symbol-function 'pop-to-buffer)
-                 (lambda (buf) (setq displayed buf)))
+                 (lambda (buf &optional _action) (setq displayed buf)))
                 ;; Mock nixos--package-meta to return metadata with outPath.
                 ((symbol-function 'nixos--package-meta)
                  (lambda (_)
@@ -494,7 +495,7 @@ converted to strings by stripping the leading colon."
       (nixos-test--options-hash
        '("services.foo.enable" :description "Enable foo"))
     (cl-letf (((symbol-function 'pop-to-buffer)
-               (lambda (buf) (set-buffer buf))))
+               (lambda (buf &optional _action) (set-buffer buf))))
         (nixos-option "services.foo.enable")
         (should (eq major-mode 'nixos-browse-mode))
         (should (eq nixos--browse-type 'option))
@@ -508,7 +509,7 @@ converted to strings by stripping the leading colon."
        '("legacyPackages.x86_64-linux.htop"
          :pname "htop" :description "viewer"))
     (cl-letf (((symbol-function 'pop-to-buffer)
-               (lambda (buf) (set-buffer buf))))
+               (lambda (buf &optional _action) (set-buffer buf))))
       (nixos-package "htop")
       (should (eq major-mode 'nixos-browse-mode))
       (should (eq nixos--browse-type 'package))
@@ -523,7 +524,7 @@ converted to strings by stripping the leading colon."
     (let ((url-called nil)
           (url-arg nil))
       (cl-letf (((symbol-function 'pop-to-buffer)
-                 (lambda (buf) (set-buffer buf)))
+                 (lambda (buf &optional _action) (set-buffer buf)))
                 ((symbol-function 'browse-url)
                  (lambda (url) (setq url-called t url-arg url))))
         (nixos-option "services.foo.enable")
@@ -542,7 +543,7 @@ converted to strings by stripping the leading colon."
     (let ((url-called nil)
           (url-arg nil))
       (cl-letf (((symbol-function 'pop-to-buffer)
-                 (lambda (buf) (set-buffer buf)))
+                 (lambda (buf &optional _action) (set-buffer buf)))
                 ((symbol-function 'browse-url)
                  (lambda (url) (setq url-called t url-arg url))))
         (nixos-package "htop")
@@ -560,7 +561,7 @@ converted to strings by stripping the leading colon."
     (let ((browse-buf nil)
           (refreshed nil))
       (cl-letf (((symbol-function 'pop-to-buffer)
-                 (lambda (buf) (setq browse-buf buf) (set-buffer buf))))
+                 (lambda (buf &optional _action) (setq browse-buf buf) (set-buffer buf))))
         (nixos-option "services.foo.enable")
         (should (equal nixos--browse-name "services.foo.enable"))
         ;; Now mock nixos-option and call refresh from the browse buffer.
@@ -579,7 +580,7 @@ converted to strings by stripping the leading colon."
       (nixos-test--options-hash
        '("services.foo.enable" :description "bar"))
     (cl-letf (((symbol-function 'pop-to-buffer)
-               (lambda (buf) (set-buffer buf))))
+               (lambda (buf &optional _action) (set-buffer buf))))
       (nixos-option "services.foo.enable")
       (let ((rec (nixos--bookmark-make-record)))
         (should (stringp (car rec)))
@@ -596,7 +597,7 @@ converted to strings by stripping the leading colon."
        '("services.foo.enable" :description "bar"))
     (let ((called-name nil))
       (cl-letf (((symbol-function 'pop-to-buffer)
-                 (lambda (buf) (set-buffer buf)))
+                 (lambda (buf &optional _action) (set-buffer buf)))
                 ((symbol-function 'nixos-option)
                  (lambda (name) (setq called-name name))))
         (nixos--bookmark-jump '((type . option)
@@ -611,7 +612,7 @@ converted to strings by stripping the leading colon."
          :pname "htop" :description "viewer"))
     (let ((called-name nil))
       (cl-letf (((symbol-function 'pop-to-buffer)
-                 (lambda (buf) (set-buffer buf)))
+                 (lambda (buf &optional _action) (set-buffer buf)))
                 ((symbol-function 'nixos-package)
                  (lambda (name) (setq called-name name))))
         (nixos--bookmark-jump '((type . package)
@@ -626,7 +627,7 @@ converted to strings by stripping the leading colon."
          :pname "htop" :description "viewer"))
     (let ((called-dir nil))
       (cl-letf (((symbol-function 'pop-to-buffer)
-                 (lambda (buf) (set-buffer buf)))
+                 (lambda (buf &optional _action) (set-buffer buf)))
                 ((symbol-function 'nixos-package-local)
                  (lambda () (setq called-dir default-directory))))
         (nixos--bookmark-jump '((type . package)
@@ -917,6 +918,79 @@ converted to strings by stripping the leading colon."
       (should (assoc "services.foo.enable" entries)))))
 
 
+;;; Browse table mouse and menu
+
+(defmacro nixos-test--with-option-table (&rest body)
+  "Evaluate BODY in a printed option table buffer without groups.
+Point sits on the first row.  The selected window shows the buffer,
+so a posn reads the row."
+  (declare (indent 0))
+  `(nixos-test--with-options
+       (nixos-test--options-hash
+        '("boot.a.enable" :type "boolean" :description "a")
+        '("services.b.enable" :type "boolean" :description "b"))
+     (let ((nixos-option-groups nil))
+       (with-temp-buffer
+         (nixos-browse-options-mode)
+         (tabulated-list-print)
+         (set-window-buffer (selected-window) (current-buffer))
+         (goto-char (point-min))
+         ,@body))))
+
+(ert-deftest nixos-browse-table-print-entry-properties ()
+  "A printed row carries mouse help and a name-only mouse face."
+  (nixos-test--with-option-table
+    (should (equal (get-text-property (point-min) 'help-echo)
+                   nixos--browse-table-mouse-help))
+    (let ((name-start (+ (point-min) tabulated-list-padding)))
+      (should (eq (get-text-property name-start 'mouse-face) 'highlight))
+      (should-not (get-text-property (+ name-start (length "boot.a.enable"))
+                                     'mouse-face)))))
+
+(ert-deftest nixos-browse-table-click-selects-row ()
+  "The follow-link predicate returns nil, so a click does not follow."
+  (should-not (nixos--browse-table-click-selects-row)))
+
+(ert-deftest nixos-browse-table-name-at-event ()
+  "A mouse event reads the entry name of the row under the pointer."
+  (nixos-test--with-option-table
+    (let ((event (list 'mouse-2 (list (selected-window) (point)
+                                      '(0 . 0) nil 0))))
+      (should (equal (nixos--browse-table-name-at-event event)
+                     "boot.a.enable")))))
+
+(ert-deftest nixos-browse-table-other-window-action ()
+  "The other-window command passes the display action once."
+  (nixos-test--with-option-table
+    (let ((seen-action 'none))
+      (cl-letf (((symbol-function 'pop-to-buffer)
+                 (lambda (buf &optional action)
+                   (setq seen-action action)
+                   (set-buffer buf))))
+        (nixos-browse-table-other-window))
+      (should (eq seen-action #'display-buffer-other-window))
+      (should-not nixos-display-buffer-action))))
+
+(ert-deftest nixos-browse-table-copy-name ()
+  "`nixos-browse-table-copy-name' copies the entry name."
+  (nixos-test--with-option-table
+    (kill-new "")
+    (nixos-browse-table-copy-name)
+    (should (equal (current-kill 0) "boot.a.enable"))))
+
+(ert-deftest nixos-browse-table-context-menu ()
+  "The context menu names the row commands, and skips a blank line."
+  (nixos-test--with-option-table
+    (let* ((menu (make-sparse-keymap))
+           (click (list 'mouse-3 (list (selected-window) (point)
+                                       '(0 . 0) nil 0)))
+           (filled (nixos-browse-table-context-menu menu click)))
+      (should (lookup-key filled [nixos-browse-table-open]))
+      (should (lookup-key filled [nixos-browse-table-open-other-window]))
+      (should (lookup-key filled [nixos-browse-table-copy-name]))
+      (should (lookup-key filled [nixos-browse-table-refresh])))))
+
+
 ;;; Embark
 
 (ert-deftest nixos-search-names-substring ()
@@ -1068,7 +1142,7 @@ converted to strings by stripping the leading colon."
     (puthash "version" "2.0" meta-ht)
     (puthash "homepage" "https://example.com/" meta-ht)
     (cl-letf (((symbol-function 'pop-to-buffer)
-               (lambda (buf) (setq displayed buf) (set-buffer buf)))
+               (lambda (buf &optional _action) (setq displayed buf) (set-buffer buf)))
               ((symbol-function 'nixos--call-nix-url-expr)
                (lambda (_url)
                  (let ((vec (vector meta-ht
@@ -1110,7 +1184,7 @@ converted to strings by stripping the leading colon."
         (meta-ht (make-hash-table :test 'equal)))
     (puthash "description" "refresh test" meta-ht)
     (cl-letf (((symbol-function 'pop-to-buffer)
-               (lambda (buf) (setq browse-buf buf) (set-buffer buf)))
+               (lambda (buf &optional _action) (setq browse-buf buf) (set-buffer buf)))
               ((symbol-function 'nixos--call-nix-url-expr)
                (lambda (_url)
                  (let ((vec (vector meta-ht "/nix/store/ref" "1.0" '[] '[] "refpkg" nil)))
@@ -1136,7 +1210,7 @@ converted to strings by stripping the leading colon."
           (write-region "{ pkgs ? import <nixpkgs> {} }: pkgs.hello" nil
                         (expand-file-name "default.nix" proj-dir))
           (cl-letf (((symbol-function 'pop-to-buffer)
-                     (lambda (buf) (setq browse-buf buf) (set-buffer buf)))
+                     (lambda (buf &optional _action) (setq browse-buf buf) (set-buffer buf)))
                     ((symbol-function 'nixos--call-nix-package-expr)
                      (lambda (_expr &rest _args)
                        (cons (list (cons 'meta meta-ht)
@@ -1184,7 +1258,7 @@ converted to strings by stripping the leading colon."
                                       (puthash "storePath" "/nix/store/python3" h)
                                       h))))))
       (cl-letf (((symbol-function 'pop-to-buffer)
-                 (lambda (buf) (setq browse-buf buf) (set-buffer buf))))
+                 (lambda (buf &optional _action) (setq browse-buf buf) (set-buffer buf))))
         (nixos--display-package "htop" info)
         (with-current-buffer browse-buf
           (should (string-match-p "ncurses" (buffer-string)))
@@ -1198,7 +1272,7 @@ converted to strings by stripping the leading colon."
   (let ((meta-ht (make-hash-table :test 'equal)))
     (puthash "description" "url-pkg" meta-ht)
     (cl-letf (((symbol-function 'pop-to-buffer)
-               (lambda (buf) (set-buffer buf)))
+               (lambda (buf &optional _action) (set-buffer buf)))
               ((symbol-function 'nixos--call-nix-url-expr)
                (lambda (_url)
                  (let ((vec (vector meta-ht "/nix/store/u" "3.0" '[] '[] "urlpkg" nil)))
@@ -1216,7 +1290,7 @@ converted to strings by stripping the leading colon."
   "`nixos--bookmark-jump' calls `nixos-package-url' for URL bookmarks."
   (let ((called-url nil))
     (cl-letf (((symbol-function 'pop-to-buffer)
-               (lambda (buf) (set-buffer buf)))
+               (lambda (buf &optional _action) (set-buffer buf)))
               ((symbol-function 'nixos-package-url)
                (lambda (url) (setq called-url url))))
       (nixos--bookmark-jump '((type . package)
@@ -1230,7 +1304,7 @@ converted to strings by stripping the leading colon."
         (meta-ht (make-hash-table :test 'equal)))
     (puthash "description" "No pname" meta-ht)
     (cl-letf (((symbol-function 'pop-to-buffer)
-               (lambda (buf) (setq displayed buf) (set-buffer buf)))
+               (lambda (buf &optional _action) (setq displayed buf) (set-buffer buf)))
               ((symbol-function 'nixos--call-nix-url-expr)
                (lambda (_url)
                  (let ((vec (vector meta-ht "/nix/store/nm" "1.2" '[] '[] :json-false nil)))
@@ -1411,7 +1485,7 @@ converted to strings by stripping the leading colon."
        '("services.foo.enable" :type "boolean" :description "foo"))
     (let ((called-names nil) (called-prefix :sentinel))
       (cl-letf (((symbol-function 'switch-to-buffer)
-                 (lambda (buf) (set-buffer buf)))
+                 (lambda (buf &optional _action) (set-buffer buf)))
                 ((symbol-function 'nixos-browse-options)
                  (lambda (names &optional prefix)
                    (setq called-names names called-prefix prefix))))
@@ -1428,7 +1502,7 @@ converted to strings by stripping the leading colon."
          :pname "htop" :version "3.0" :description "viewer"))
     (let ((called-names nil) (called-prefix :sentinel))
       (cl-letf (((symbol-function 'switch-to-buffer)
-                 (lambda (buf) (set-buffer buf)))
+                 (lambda (buf &optional _action) (set-buffer buf)))
                 ((symbol-function 'nixos-browse-packages)
                  (lambda (names &optional prefix)
                    (setq called-names names called-prefix prefix))))
@@ -1502,7 +1576,7 @@ converted to strings by stripping the leading colon."
     (puthash "name" "hello-2.12" data)
     (puthash "description" "A greeting program" data)
     (cl-letf (((symbol-function 'pop-to-buffer)
-               (lambda (buf) (setq displayed buf) (set-buffer buf))))
+               (lambda (buf &optional _action) (setq displayed buf) (set-buffer buf))))
       (nixos--display-flake "packages.x86_64-linux.hello" data ".")
       (should displayed)
       (should (buffer-live-p displayed))
@@ -1576,7 +1650,7 @@ converted to strings by stripping the leading colon."
          (displayed nil))
     (puthash "type" "app" data)
     (cl-letf (((symbol-function 'pop-to-buffer)
-               (lambda (buf) (setq displayed buf) (set-buffer buf))))
+               (lambda (buf &optional _action) (setq displayed buf) (set-buffer buf))))
       (nixos--bookmark-jump '((type . flake)
                               (name . "apps.x86_64-linux.foo")
                               (source . "myflakedir")))
@@ -1660,7 +1734,7 @@ converted to strings by stripping the leading colon."
     (puthash "packages.x86_64-linux.hello" node cache)
     (puthash "description" "A demo flake" meta)
     (cl-letf (((symbol-function 'pop-to-buffer)
-               (lambda (buf) (setq displayed buf) (set-buffer buf))))
+               (lambda (buf &optional _action) (setq displayed buf) (set-buffer buf))))
       (nixos--display-flake-overview "/tmp/ref" cache meta)
       (should displayed)
       (with-current-buffer displayed
