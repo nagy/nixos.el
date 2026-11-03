@@ -803,6 +803,7 @@ converted to strings by stripping the leading colon."
       (nixos-browse-packages-mode)
       (setq tabulated-list-sort-key '("Version" . nil))
       (tabulated-list-init-header)
+      (nixos--browse-table-reload)
       (tabulated-list-print)
       (goto-char (point-min))
       (should (equal (tabulated-list-get-id) "old"))
@@ -821,20 +822,45 @@ converted to strings by stripping the leading colon."
       (should (= (length entries) 1))
       (should (assoc "htop" entries)))))
 
-(ert-deftest nixos-browse-table-entries-as-function ()
-  "The table modes read entries from a buffer-local function."
+(ert-deftest nixos-browse-table-entries-from-filter ()
+  "The table modes build entries from a buffer-local function."
   (nixos-test--with-options
       (nixos-test--options-hash
        '("services.foo.enable" :type "boolean" :description "foo")
        '("services.bar.enable" :type "string" :description "bar"))
     (with-temp-buffer
       (nixos-browse-options-mode)
-      (should (functionp tabulated-list-entries))
+      (should (functionp nixos--browse-table-entries-function))
+      (should (memq 'nixos--browse-table-reload
+                    tabulated-list-revert-hook))
       (should (eq revert-buffer-function #'tabulated-list-revert))
-      (should (= (length (funcall tabulated-list-entries)) 2))
+      (nixos--browse-table-reload)
+      (should (= (length tabulated-list-entries) 2))
       (setq-local nixos--browse-name-list '("services.foo.enable"))
-      (should (equal (mapcar #'car (funcall tabulated-list-entries))
+      (nixos--browse-table-reload)
+      (should (equal (mapcar #'car tabulated-list-entries)
                      '("services.foo.enable"))))))
+
+(ert-deftest nixos-browse-options-restore-original-order ()
+  "The table keeps the `tabulated-list-sort' restore path working.
+The entries must stay a list for that: `tabulated-list-sort' walks
+it to record the original order."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable" :type "boolean" :description "foo")
+       '("boot.bar.enable" :type "string" :description "bar"))
+    (let ((nixos-option-groups nil))
+      (with-temp-buffer
+        (nixos-browse-options-mode)
+        (nixos--browse-table-reload)
+        (tabulated-list-print)
+        (goto-char (point-min))
+        (tabulated-list-sort 1)
+        (should (equal (tabulated-list-get-id) "boot.bar.enable"))
+        (tabulated-list-sort -1)
+        (goto-char (point-min))
+        (should (equal (tabulated-list-get-id) "boot.bar.enable"))
+        (should-not tabulated-list-sort-key)))))
 
 (ert-deftest nixos-browse-options-revert-keeps-filter ()
   "`revert-buffer' re-reads the entries and keeps the filter."
@@ -846,6 +872,7 @@ converted to strings by stripping the leading colon."
       (with-temp-buffer
         (nixos-browse-options-mode)
         (setq-local nixos--browse-name-list '("services.foo.enable"))
+        (nixos--browse-table-reload)
         (tabulated-list-print)
         (revert-buffer)
         (goto-char (point-min))
@@ -884,6 +911,7 @@ converted to strings by stripping the leading colon."
        '("boot.a.enable" :type "boolean" :description "a"))
     (with-temp-buffer
       (nixos-browse-options-mode)
+      (nixos--browse-table-reload)
       (tabulated-list-print)
       (goto-char (point-min))
       (should (equal (buffer-substring-no-properties
@@ -902,6 +930,7 @@ converted to strings by stripping the leading colon."
     (let ((nixos-option-groups nil))
       (with-temp-buffer
         (nixos-browse-options-mode)
+        (nixos--browse-table-reload)
         (tabulated-list-print)
         (goto-char (point-min))
         (should (equal (tabulated-list-get-id) "boot.a.enable"))))))
@@ -932,6 +961,7 @@ so a posn reads the row."
      (let ((nixos-option-groups nil))
        (with-temp-buffer
          (nixos-browse-options-mode)
+         (nixos--browse-table-reload)
          (tabulated-list-print)
          (set-window-buffer (selected-window) (current-buffer))
          (goto-char (point-min))
@@ -1020,6 +1050,7 @@ buffer."
           :pname "7off" :version "1.0" :description "odd"))
      (with-temp-buffer
        (nixos-browse-packages-mode)
+       (nixos--browse-table-reload)
        (tabulated-list-print)
        (goto-char (point-min))
        ,@body)))

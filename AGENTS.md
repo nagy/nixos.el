@@ -274,9 +274,15 @@ the enum instead.
   `refresh` (`g`) preserves the filter.
 - Mode map inherits from `tabulated-list-mode-map`
 - `hl-line-mode 1` enabled by default
-- `tabulated-list-entries` holds a closure, not a list.  The mode
-  installs `(lambda () (--entries nixos--browse-name-list))`, so
-  every print re-reads the buffer-local filter.
+- `tabulated-list-entries` holds a list, not a function.
+  `tabulated-list-sort` walks that variable to record the original
+  order for its restore path (`C-u -1 S`), and a function value breaks
+  it silently.  The mode stores
+  `nixos--browse-table-entries-function` instead, and
+  `nixos--browse-table-reload` builds the list.  The mode adds that
+  function to `tabulated-list-revert-hook` buffer-locally, so `g`
+  keeps the filter.  The browse command calls it before the first
+  print.  Do not turn the variable into a closure.
 - No generated refresh function exists.  `revert-buffer-function`
   stays at the `tabulated-list-mode` default, so `g` calls
   `tabulated-list-revert`, which prints and re-reads the entries

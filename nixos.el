@@ -1557,6 +1557,20 @@ table.  The table modes set it.")
   "Type of the entries in this table buffer: `option' or `package'.
 The table modes set it, and the export commands read it.")
 
+(defvar-local nixos--browse-table-entries-function nil
+  "Function that builds `tabulated-list-entries' for this buffer.
+It takes the buffer-local name-list filter, so a reload keeps the
+filter.  The table modes set it.")
+
+(defun nixos--browse-table-reload ()
+  "Rebuild `tabulated-list-entries' from the buffer-local filter.
+The `tabulated-list-revert-hook' of a table buffer calls this, so
+`g' keeps the filter."
+  (when nixos--browse-table-entries-function
+    (setq tabulated-list-entries
+          (funcall nixos--browse-table-entries-function
+                   nixos--browse-name-list))))
+
 (defconst nixos--option-group-other "(top level)"
   "Group title for an option name without a dot.")
 
@@ -1909,8 +1923,9 @@ name of that entry.  Internal use only."
                         nil))
          (tabulated-list-init-header)
          (hl-line-mode 1)
-         (setq-local tabulated-list-entries
-                     (lambda () (,entries-fn nixos--browse-name-list)))
+         (setq-local nixos--browse-table-entries-function #',entries-fn)
+         (add-hook 'tabulated-list-revert-hook
+                   #'nixos--browse-table-reload nil t)
          (setq-local tabulated-list-printer
                      #'nixos--browse-table-print-entry)
          (setq-local nixos--browse-table-visit-function #',visit-fn)
@@ -1991,6 +2006,7 @@ to filter the view in-place." typestr typestr mode-map visit search-url)
                (setq-local default-directory
                            (or (nixos--ensure-nixpkgs-root)
                                default-directory))
+               (nixos--browse-table-reload)
                (tabulated-list-print))
              (switch-to-buffer buf)))))))
 
