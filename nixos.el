@@ -75,6 +75,7 @@
 ;;; Code:
 
 (require 'json)
+(require 'outline)
 (require 'tabulated-list)
 (require 'thingatpt)
 (require 'cl-lib)
@@ -467,6 +468,7 @@ ACTION."
 (defvar-keymap nixos-browse-mode-map
   :doc "Keymap for `nixos-browse-mode'."
   :parent special-mode-map
+  "TAB" #'nixos-browse-toggle-section
   "b" #'nixos-browse-search-url
   "r" #'nixos-browse-show-requisites
   "w" #'nixos-browse-copy-store-path)
@@ -477,7 +479,15 @@ ACTION."
 \\{nixos-browse-mode-map}"
   :interactive nil
   (setq-local bookmark-make-record-function #'nixos--bookmark-make-record)
-  (setq-local revert-buffer-function #'nixos-browse-refresh))
+  (setq-local revert-buffer-function #'nixos-browse-refresh)
+  ;; A heading line carries `nixos-section', so the outline search finds
+  ;; it and no heading needs a special character.  Every section is a top
+  ;; level section, so the level answers one.
+  (setq-local outline-search-function #'nixos--outline-search)
+  (setq-local outline-level (lambda () 1))
+  (setq-local outline-minor-mode-highlight nil)
+  (outline-minor-mode 1)
+  (setq-local imenu-create-index-function #'nixos--browse-imenu-index))
 
 (defvar-local nixos--browse-type nil
   "The type of item in the current browse buffer: `option' or `package'.")
@@ -515,6 +525,122 @@ POSITION is the package's `meta.position' string, if any."
         nixos--browse-out-path out-path
         nixos--browse-source source
         nixos--browse-position position))
+
+
+;;; Sections
+
+(defun nixos--field-key (label)
+  "Return the imenu key of field LABEL, without its padding and colon."
+  (declare (pure t) (side-effect-free t))
+  (string-trim-right label "[ \t:]+"))
+
+;; A detail buffer folds its sections through `outline-minor-mode'.  A
+;; heading line carries the text property `nixos-section' with the name
+;; of the section, and `outline-search-function' finds it, so no heading
+;; needs a special character in the text.  Every section is a top level
+;; section, so `outline-level' answers one for each of them.
+
+(defun nixos--mark-section (start end title)
+  "Give the text between START and END the section property TITLE.
+TITLE loses its padding and its colon, so the section name of a
+heading line and the imenu key of a field line agree."
+  (add-text-properties start end (list 'nixos-section (nixos--field-key title))))
+
+(defun nixos--insert-section (title &optional face)
+  "Insert TITLE as the heading line of a foldable section.
+The heading keeps FACE, defaulting to `nixos-field-label', and
+carries `nixos-section', so a render restores a fold by name."
+  (let ((start (point)))
+    (insert (propertize title 'face (or face 'nixos-field-label)) "\n")
+    (nixos--mark-section start (1- (point)) title)))
+
+(defun nixos--outline-search (&optional bound move backward looking-at)
+  "Search for the next text property `nixos-section'.
+BOUND, MOVE, BACKWARD and LOOKING-AT have the meaning that
+`outline-search-function' documents."
+  (outline-search-text-property 'nixos-section nil bound move backward
+                                looking-at))
+
+(defun nixos--browse-section-headings ()
+  "Return the start of every section heading of the current buffer.
+The positions come in buffer order."
+  (let (headings
+        (position (point-min)))
+    (save-excursion
+      (while (< position (point-max))
+        (when (get-text-property position 'nixos-section)
+          (push position headings))
+        (setq position (or (next-single-property-change
+                            position 'nixos-section nil (point-max))
+                           (point-max)))))
+    (nreverse headings)))
+
+(defun nixos--browse-collapsed-sections ()
+  "Return the names of the folded sections of the current buffer.
+A refresh reads this before it erases the buffer, so it keeps the
+fold of a reader."
+  (when (bound-and-true-p outline-minor-mode)
+    (let (names)
+      (dolist (heading (nixos--browse-section-headings))
+        (save-excursion
+          (goto-char heading)
+          (when (outline-invisible-p (line-end-position))
+            (push (get-text-property heading 'nixos-section) names))))
+      names)))
+
+(defun nixos--browse-hide-section (name)
+  "Fold the section NAME of the current buffer when it is present."
+  (when-let* ((heading (seq-find
+                        (lambda (position)
+                          (equal (get-text-property position 'nixos-section)
+                                 name))
+                        (nixos--browse-section-headings))))
+    (let ((inhibit-read-only t))
+      (save-excursion
+        (goto-char heading)
+        (outline-hide-subtree)))))
+
+(defun nixos--browse-restore-sections (names)
+  "Fold the sections of NAMES in the current buffer."
+  (dolist (name names)
+    (nixos--browse-hide-section name)))
+
+(defun nixos--browse-enclosing-section ()
+  "Return the start of the heading line of the section around point.
+Return nil when point sits above the first section."
+  (save-excursion
+    (beginning-of-line)
+    (if (get-text-property (point) 'nixos-section)
+        (point)
+      (when (outline-previous-heading)
+        (point)))))
+
+(defun nixos-browse-toggle-section ()
+  "Fold or unfold the section of the browse buffer around point.
+The command works on every line of a section, not only on the line
+that shows its heading, so a reader folds a long block from the
+middle of it."
+  (interactive)
+  (unless (derived-mode-p 'nixos-browse-mode)
+    (user-error "Not a nixos browse buffer"))
+  (when-let* ((heading (nixos--browse-enclosing-section)))
+    (let ((inhibit-read-only t))
+      (save-excursion
+        (goto-char heading)
+        (outline-toggle-children)))))
+
+(defun nixos--browse-imenu-index ()
+  "Return an imenu index of the sections and the field lines."
+  (let (index)
+    (save-excursion
+      (goto-char (point-min))
+      (while (not (eobp))
+        (if-let* ((section (get-text-property (point) 'nixos-section)))
+            (push (cons section (point)) index)
+          (when-let* ((field (get-text-property (point) 'nixos-field)))
+            (push (cons field (point)) index)))
+        (forward-line 1)))
+    (nreverse index)))
 
 (defun nixos-browse-show-requisites ()
   "Open the store path of the current package in `nix-store-path-mode'.
@@ -575,7 +701,8 @@ convention."
   (interactive)
   (unless nixos--browse-name
     (user-error "Nothing to refresh"))
-  (let ((pt (point)))
+  (let ((pt (point))
+        (collapsed (nixos--browse-collapsed-sections)))
     (cl-case nixos--browse-type
       (option (nixos-option nixos--browse-name))
       (package (pcase nixos--browse-source
@@ -592,20 +719,27 @@ convention."
                  (user-error "Flake node `%s' no longer cached"
                              nixos--browse-name))))
       (t (user-error "Unknown browse type %s" nixos--browse-type)))
+    (nixos--browse-restore-sections collapsed)
     (goto-char pt)))
 
 (defun nixos--field (label value &optional face)
   "Insert a LABEL field with VALUE into the current buffer.
 LABEL is right-padded to 14 columns.  VALUE may be nil (inserted
-as an empty value) or a string; optional FACE is applied to it."
-  (insert (propertize (format "%-14s" label) 'face 'nixos-field-label))
+as an empty value) or a string; optional FACE is applied to it.
+The label carries `nixos-field' with `nixos--field-key', so the
+imenu index of the buffer lists it."
+  (insert (propertize (format "%-14s" label)
+                      'face 'nixos-field-label
+                      'nixos-field (nixos--field-key label)))
   (when (and value (not (string-empty-p value)))
     (insert (if face (propertize value 'face face) value)))
   (insert "\n"))
 
 (defun nixos--link (label url)
   "Insert a clickable LABEL field for URL into the current buffer."
-  (insert (propertize (format "%-14s" label) 'face 'nixos-field-label))
+  (insert (propertize (format "%-14s" label)
+                      'face 'nixos-field-label
+                      'nixos-field (nixos--field-key label)))
   (when url
     (insert-text-button url
                         'action (lambda (_) (browse-url url))
@@ -622,7 +756,8 @@ as an empty value) or a string; optional FACE is applied to it."
         (nixos-browse-mode)
         (nixos--browse-setup 'option name)
         ;; Title
-        (insert (propertize name 'face 'nixos-package-name) "\n\n")
+        (nixos--insert-section name 'nixos-package-name)
+        (insert "\n")
         ;; Fields
         (nixos--field "Type:" (gethash "type" data))
         (nixos--field "Default:"
@@ -634,7 +769,8 @@ as an empty value) or a string; optional FACE is applied to it."
                       (nixos--value-to-string (gethash "example" data)))
         (let ((decls (gethash "declarations" data)))
           (when (and decls (not (eq decls :null)))
-            (nixos--field "Declared by:" nil)
+            ;; The declaration list can run long, so it folds.
+            (nixos--insert-section "Declared by:")
             (dolist (d (if (vectorp decls) (append decls nil) decls))
               (insert "  " d "\n"))))
         ;; Point default-directory at the nixpkgs root so
@@ -675,8 +811,10 @@ installed Nix package."
         (nixos-browse-mode)
         (nixos--browse-setup 'package name out-path source (alist-get 'position info))
         ;; Title
-        (insert (propertize (format "%-14s" "Name:") 'face 'nixos-field-label)
-                (propertize name 'face 'nixos-package-name) "\n")
+        (let ((start (point)))
+          (insert (propertize (format "%-14s" "Name:") 'face 'nixos-field-label)
+                  (propertize name 'face 'nixos-package-name) "\n")
+          (nixos--mark-section start (1- (point)) "Name:"))
         (when out-path
           (nixos--field "Store path:"
                         (propertize out-path
@@ -722,7 +860,8 @@ installed Nix package."
                                   (t (nixos--value-to-string lic))))))
           (let ((maint (gethash "maintainers" meta-data)))
             (when (and maint (not (eq maint :null)))
-              (nixos--field "Maintainers:" nil)
+              ;; The maintainer list can run long, so it folds.
+              (nixos--insert-section "Maintainers:")
               (dolist (m (if (vectorp maint) (append maint nil) maint))
                 (when (hash-table-p m)
                   (insert "  " (or (gethash "name" m) "") "\n"))))))
@@ -741,7 +880,9 @@ installed Nix package."
                               (nativeBuildInputs . "Native Build Inputs:")))
             (let ((deps (alist-get (car dep-type) info)))
               (when (and deps (vectorp deps) (> (length deps) 0))
-                (insert "\n" (propertize (cdr dep-type) 'face 'nixos-field-label) "\n")
+                (insert "\n")
+                ;; The input list can run long, so it folds.
+                (nixos--insert-section (cdr dep-type))
                 (dolist (dep (append deps nil))
                   (let ((dep-name (gethash "name" dep))
                         (dep-store (gethash "storePath" dep)))
@@ -787,7 +928,8 @@ are unavailable here."
         (nixos--browse-setup 'flake name)
         (setq-local nixos--browse-flake-ref ref)
         ;; Title
-        (insert (propertize name 'face 'nixos-package-name) "\n\n")
+        (nixos--insert-section name 'nixos-package-name)
+        (insert "\n")
         ;; Fields
         (let ((type (gethash "type" data)))
           (when type
@@ -1069,6 +1211,18 @@ through `abbreviate-file-name'; URLs and flake references such as
       (abbreviate-file-name path)
     path))
 
+(defun nixos--flake-overview-refresh ()
+  "Refresh the flake overview buffer.
+A refresh runs `nix flake show' again on the reference of the
+buffer and keeps the folds of the reader."
+  (interactive)
+  (let ((ref nixos--browse-flake-ref)
+        (collapsed (nixos--browse-collapsed-sections)))
+    (unless ref
+      (user-error "No flake reference in this buffer"))
+    (nixos-flake ref)
+    (nixos--browse-restore-sections collapsed)))
+
 (defun nixos--display-flake-overview (ref cache &optional meta)
   "Create a whole-flake detail buffer for REF from CACHE.
 
@@ -1089,8 +1243,7 @@ node's detail buffer via `nixos--display-flake'."
         ;; The overview buffer is not bookmarkable (node-only bookmarks),
         ;; and regenerating it re-runs `nix flake show' on the ref.
         (setq-local bookmark-make-record-function nil)
-        (setq-local revert-buffer-function
-                    (lambda (&rest _) (nixos-flake ref)))
+        (setq-local revert-buffer-function #'nixos--flake-overview-refresh)
         (nixos--browse-setup 'flake ref)
         (setq-local nixos--browse-flake-ref ref)
         (setq-local nixos--browse-name ref)
@@ -1103,34 +1256,43 @@ node's detail buffer via `nixos--display-flake'."
                ;; Pad LABEL to label-width, then one separating space.
                (pad (lambda (label)
                       (format (format "%%-%ds " label-width) label))))
-          (insert (propertize (funcall pad "Flake:")
-                              'face 'nixos-field-label)
-                  (propertize (nixos--abbreviate-path ref)
-                              'face 'nixos-package-name)
-                  "\n")
+          (let ((start (point)))
+            (insert (propertize (funcall pad "Flake:")
+                                'face 'nixos-field-label)
+                    (propertize (nixos--abbreviate-path ref)
+                                'face 'nixos-package-name)
+                    "\n")
+            (nixos--mark-section start (1- (point)) "Flake:"))
           ;; Scalar metadata fields (Flake, Description, ...), each label and
           ;; value on one line, right-aligned to the longest label.  The
           ;; multi-line Inputs list is handled separately below.
           (dolist (field fields)
             (when (not (listp (cdr field)))
               (insert (propertize (funcall pad (car field))
-                                  'face 'nixos-field-label)
+                                  'face 'nixos-field-label
+                                  'nixos-field (nixos--field-key (car field)))
                       (if (cdr field) (nixos--abbreviate-path (cdr field)) "")
                       "\n")))
           ;; Inputs tree, rendered like the Outputs section below: a header
           ;; line then the nested tree, separated by a blank line.  Each line
           ;; is already formatted with its tree prefix, so it is inserted
-          ;; verbatim (no re-alignment or abbreviation).
+          ;; verbatim (no re-alignment or abbreviation).  The tree can run
+          ;; long, so its header folds.
           (let ((inputs (cdr (assoc "Inputs:" fields))))
             (when inputs
-              (insert "\n" (propertize "Inputs:" 'face 'nixos-field-label) "\n")
+              (insert "\n")
+              (nixos--insert-section "Inputs:")
               (dolist (item inputs)
                 (insert item "\n"))))
           (insert "\n")
-          ;; Node list header.
-          (insert (propertize (format "Outputs (%d):" (length names))
-                              'face 'nixos-field-label)
-                  "\n")
+          ;; Node list header.  The count changes with the flake, so the
+          ;; section keeps its plain name and only the display text
+          ;; carries the number.
+          (let ((start (point)))
+            (insert (propertize (format "Outputs (%d):" (length names))
+                                'face 'nixos-field-label)
+                    "\n")
+            (nixos--mark-section start (1- (point)) "Outputs:"))
           ;; Clickable lines.  The type and description columns align at the
           ;; longest node path plus one column.
           (let* ((max-path (if names

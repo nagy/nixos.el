@@ -257,6 +257,32 @@ the enum instead.
 `revert-buffer-function` (`nixos-browse-refresh`); no explicit
 `read-only-mode` calls or custom `g` bindings.
 
+### Detail buffer sections
+
+`nixos-browse-mode` folds detail sections through `outline-minor-mode`.
+A heading line carries the text property `nixos-section`, and
+`outline-search-function` is `nixos--outline-search`, which wraps
+`outline-search-text-property`.  No heading needs a special character.
+Every section is top level, so `outline-level` answers one.
+
+`nixos--insert-section` writes a heading with the `nixos-field-label`
+face.  `nixos--mark-section` tags a line that the caller already
+wrote.  Both store the name through `nixos--field-key`, which trims
+padding and the trailing colon, so a fold survives a render that
+changes the count of a heading such as `Outputs (12):`.
+
+`nixos--field` and `nixos--link` tag their label with `nixos-field`.
+`nixos--browse-imenu-index` lists the sections and the fields, and it
+is the `imenu-create-index-function` of the mode.
+
+`TAB` runs `nixos-browse-toggle-section` from any line of a section,
+not only from its heading.  `nixos--browse-collapsed-sections` reads
+the folded names before a render, and
+`nixos--browse-restore-sections` folds them again afterwards.
+`nixos-browse-refresh` and `nixos--flake-overview-refresh` do that.
+Outline hiding edits a text property, so it runs under
+`inhibit-read-only`.
+
 ### Tabulated-list conventions
 
 - Entry format: `(id [id col1 col2...])`

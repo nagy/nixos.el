@@ -245,6 +245,98 @@ converted to strings by stripping the leading colon."
                (lambda (_program &optional _infile _destination _display &rest _args) 1)))
       (should-not (nixos--ensure-nixpkgs-root)))))
 
+(ert-deftest nixos-browse-option-sections ()
+  "`nixos--display-option' marks its foldable sections and its fields."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable"
+         :description "Enable foo"
+         :type "boolean"
+         :declarations ["nixos/modules/foo.nix" "nixos/modules/bar.nix"]))
+    (let ((nixos--nixpkgs-root nil))
+      (cl-letf (((symbol-function 'pop-to-buffer)
+                 (lambda (buf &optional _action) (set-buffer buf))))
+        (nixos--display-option
+         "services.foo.enable"
+         (gethash "services.foo.enable" nixos--options-cache))
+        (should (equal (mapcar (lambda (position)
+                                 (get-text-property position 'nixos-section))
+                               (nixos--browse-section-headings))
+                       '("services.foo.enable" "Declared by")))
+        (should (member "Description"
+                        (mapcar #'car (nixos--browse-imenu-index))))
+        (kill-buffer)))))
+
+(ert-deftest nixos-browse-toggle-section-keeps-fold-on-refresh ()
+  "A refresh folds the sections that were folded before it."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable"
+         :description "Enable foo"
+         :declarations ["nixos/modules/foo.nix"]))
+    (let ((nixos--nixpkgs-root nil)
+          (data (gethash "services.foo.enable" nixos--options-cache)))
+      (cl-letf (((symbol-function 'pop-to-buffer)
+                 (lambda (buf &optional _action) (set-buffer buf))))
+        (nixos--display-option "services.foo.enable" data)
+        (goto-char (point-min))
+        (search-forward "Declared by")
+        (beginning-of-line)
+        (nixos-browse-toggle-section)
+        (should (equal (nixos--browse-collapsed-sections) '("Declared by")))
+        (cl-letf (((symbol-function 'nixos-option)
+                   (lambda (name) (nixos--display-option name data))))
+          (nixos-browse-refresh))
+        (should (equal (nixos--browse-collapsed-sections) '("Declared by")))
+        (kill-buffer)))))
+
+(ert-deftest nixos-browse-toggle-section-unfolds ()
+  "A second \[nixos-browse-toggle-section] shows the section again."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable"
+         :description "Enable foo"
+         :declarations ["nixos/modules/foo.nix"]))
+    (let ((nixos--nixpkgs-root nil))
+      (cl-letf (((symbol-function 'pop-to-buffer)
+                 (lambda (buf &optional _action) (set-buffer buf))))
+        (nixos--display-option
+         "services.foo.enable"
+         (gethash "services.foo.enable" nixos--options-cache))
+        (goto-char (point-min))
+        (search-forward "nixos/modules/foo.nix")
+        (nixos-browse-toggle-section)
+        (should (equal (nixos--browse-collapsed-sections) '("Declared by")))
+        (nixos-browse-toggle-section)
+        (should-not (nixos--browse-collapsed-sections))
+        (kill-buffer)))))
+
+(ert-deftest nixos-browse-package-sections ()
+  "The package detail buffer folds its input lists and maintainers."
+  (let ((meta (make-hash-table :test 'equal))
+        (dep (make-hash-table :test 'equal))
+        (browse-buf nil))
+    (puthash "name" "htop" meta)
+    (puthash "version" "3.0" meta)
+    (puthash "maintainers" (vector (make-hash-table :test 'equal)) meta)
+    (puthash "name" "ncurses" dep)
+    (let ((info (list (cons 'meta meta)
+                      (cons 'outPath "/nix/store/htop")
+                      (cons 'buildInputs (vector dep))
+                      (cons 'nativeBuildInputs (vector dep)))))
+      (cl-letf (((symbol-function 'pop-to-buffer)
+                 (lambda (buf &optional _action)
+                   (setq browse-buf buf)
+                   (set-buffer buf))))
+        (nixos--display-package "htop" info)
+        (with-current-buffer browse-buf
+          (should (equal (mapcar (lambda (position)
+                                   (get-text-property position 'nixos-section))
+                                 (nixos--browse-section-headings))
+                         '("Name" "Maintainers"
+                           "Build Inputs" "Native Build Inputs"))))
+        (kill-buffer browse-buf)))))
+
 (ert-deftest nixos-display-option-sets-default-directory ()
   "`nixos--display-option' sets `default-directory' to first declaration."
   (nixos-test--with-options
