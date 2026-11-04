@@ -203,11 +203,11 @@ Inherits from `package-description' when available."
   :group 'nixos)
 
 (defface nixos-date
-  '((t :inherit (shadow)))
+  '((t :inherit (org-date shadow)))
   "Face for the date part of timestamps in nixos detail buffers.
-Inherits from `shadow' like the `nixos-version' face; the value is a
-rendered timestamp (e.g. the `Last modified:' field and the per-input
-dates in the flake input tree).
+Inherits from `org-date', so a date looks the same as in an Org
+buffer, and from `shadow' when Org does not define its face.  Org
+stays optional, because Emacs ignores an undefined parent face.
 
 Customize this if you want dates to stand out differently from
 regular text; the default is a muted `shadow' style."
@@ -2476,6 +2476,7 @@ fit starts from.  Internal use only."
          "w" #'nixos-browse-table-copy-name
          "e" nixos-browse-table-export-map
          "<remap> <nix-mode>" #'nixos-browse-export-nix
+         "<remap> <nix-ts-mode>" #'nixos-browse-export-nix
          "<remap> <markdown-ts-mode>" #'nixos-browse-export-markdown
          "{" #'nixos--browse-table-narrow-column
          "}" #'nixos--browse-table-resize-column
@@ -2650,7 +2651,7 @@ Add this alongside `nixos-thing-at-point-setup' in
   :mode-label "NixOS-Packages"
   :buffer-name "*Nix Packages*"
   :columns [("Package" 40 t)
-            ("Version" 15 nixos--package-version-lessp)
+            ("Version" 15 nixos--package-version-lessp :right-align t)
             ("Description" 0 nil)]
   :sort-key ("Package" . nil)
   :width-fn #'nixos--package-canonical-widths

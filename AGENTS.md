@@ -394,11 +394,12 @@ assignment, so a skipped render leaves them as they were.
   export quotes a segment that is no identifier.  Both live under the
   `e` prefix keymap `nixos-browse-table-export-map`, and each writes
   a `special-mode` buffer through `nixos--export-buffer`.
-- Both table maps remap the `nix-mode` and `markdown-ts-mode`
-  commands to the export commands.  A user key that runs one of
-  those major modes elsewhere runs `nixos-browse-export-nix` or
-  `nixos-browse-export-markdown` while point sits in a table.  The
-  remap target names a symbol, so both modes stay optional.
+- Both table maps remap the `nix-mode`, `nix-ts-mode` and
+  `markdown-ts-mode` commands to the export commands.  A user key
+  that runs one of those major modes elsewhere runs
+  `nixos-browse-export-nix` or `nixos-browse-export-markdown` while
+  point sits in a table.  The remap target names a symbol, so every
+  mode stays optional.
 - A table refits its columns to the window.
   `nixos--browse-table-fit-widths` shrinks a middle column to 8 and
   then the name column to `nixos-browse-table-name-min-width`, so the
@@ -668,11 +669,13 @@ promises that the same arguments always give the same value.
 Three custom faces (`nixos-package-name`, `nixos-field-label`,
 `nixos-description`) inherit from `package.el` faces when
 available, with built-in fallbacks (`bold`, `default`).  `nixos-version`
-and `nixos-date` inherit from `shadow`, a plain built-in.  `nixos-revision`
-inherits `shadow` too with a background-adapting foreground (light/dark)
-for the `Revision:` flake hash, in the spirit of `magit-hash`.  No
-`(require 'package)` needed — the `:inherit` list resolves
-left-to-right, skipping undefined faces.  `nixos-date` is applied to
+and `nixos-revision` inherit from `shadow`, a plain built-in.
+`nixos-date` inherits `(org-date shadow)`, so a date looks the same as
+in an Org buffer and stays muted when Org does not define its face.
+`nixos-revision` inherits `shadow` too with a background-adapting
+foreground (light/dark) for the `Revision:` flake hash, in the spirit
+of `magit-hash`.  No `(require 'package)` or `(require 'org)` needed —
+the `:inherit` list resolves left-to-right, skipping undefined faces.  `nixos-date` is applied to
 all rendered timestamps (the `Last modified:` flake field and the
 per-input dates in the flake input tree); `nixos-revision` to the
 `Revision:` value.  The flake overview `Description:` field uses

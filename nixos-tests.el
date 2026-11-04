@@ -495,6 +495,26 @@ The link is an overlay, so a copy of the buffer text stays plain."
                      "https://example.com/foo"))
       (should-not (get-text-property (point-min) 'goto-address)))))
 
+(ert-deftest nixos-package-version-column-right-aligns ()
+  "The Version column of the package table aligns its cells to the right.
+A numeric column reads better that way, because the last digit of two
+versions agrees when the lengths differ."
+  (with-temp-buffer
+    (nixos-browse-packages-mode)
+    (should (plist-get (nthcdr 3 (aref tabulated-list-format 1))
+                       :right-align))))
+
+(ert-deftest nixos-browse-table-remaps-nix-ts-mode ()
+  "Both table maps send `nix-ts-mode' to the Nix export command."
+  (dolist (map (list nixos-browse-options-mode-map
+                     nixos-browse-packages-mode-map))
+    (should (eq (lookup-key map [remap nix-ts-mode])
+                #'nixos-browse-export-nix))))
+
+(ert-deftest nixos-date-inherits-org-date ()
+  "`nixos-date' takes the face of an Org date, with a fallback."
+  (should (equal (face-attribute 'nixos-date :inherit) '(org-date shadow))))
+
 (ert-deftest nixos-display-option-sets-default-directory ()
   "`nixos--display-option' sets `default-directory' to first declaration."
   (nixos-test--with-options
