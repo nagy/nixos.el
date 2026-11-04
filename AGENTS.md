@@ -283,6 +283,22 @@ the folded names before a render, and
 Outline hiding edits a text property, so it runs under
 `inhibit-read-only`.
 
+### Render skip
+
+Each detail display function wraps its body in
+`nixos--unless-rendered`, with a key that names the kind of the
+buffer and the data it renders.  The macro compares the key with
+`nixos--browse-rendered`, and it records the key when the body runs.
+A refresh that fetched the same data therefore erases nothing, so
+the point, the folds and the overlays stay.  The key holds the data
+itself, and `equal` compares hash tables and ignores the text
+properties of a string, so a fetch that returns the same JSON skips
+the render.
+
+Call the macro around the whole render and not around one field.
+It does not run the `-browse-setup` call or the buffer-local
+assignment, so a skipped render leaves them as they were.
+
 ### Tabulated-list conventions
 
 - Entry format: `(id [id col1 col2...])`
@@ -318,10 +334,16 @@ Outline hiding edits a text property, so it runs under
   function to `tabulated-list-revert-hook` buffer-locally, so `g`
   keeps the filter.  The browse command calls it before the first
   print.  Do not turn the variable into a closure.
-- No generated refresh function exists.  `revert-buffer-function`
-  stays at the `tabulated-list-mode` default, so `g` calls
-  `tabulated-list-revert`, which prints and re-reads the entries
-  function.  Do not add a per-mode refresh defun back.
+- `revert-buffer-function` is `nixos--browse-table-revert`.
+  It runs `tabulated-list-revert-hook`, which reloads the entries,
+  and reprints only when the entry list changed.  A revert of an
+  unchanged table therefore keeps the point, the tags and the group
+  headers.  `nixos--browse-table-reload` records the order that it
+  built in `nixos--browse-table-last-entries`, because
+  `tabulated-list-print` sorts `tabulated-list-entries` in place.
+  The change test compares two lists of entries, and `equal`
+  ignores the text properties of a cell, so a face change alone
+  never triggers a reprint.  Do not compare the printed buffer.
 - The modes set `bookmark-make-record-function` to
   `nixos--browse-table-bookmark-make-record` for saving filtered
   table views.

@@ -337,6 +337,74 @@ converted to strings by stripping the leading colon."
                            "Build Inputs" "Native Build Inputs"))))
         (kill-buffer browse-buf)))))
 
+(ert-deftest nixos-display-option-skips-an-equal-render ()
+  "A display that receives the data of the buffer keeps its text.
+A refresh folds the sections again, so a fold that survives a
+second display proves that the buffer was not erased."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable"
+         :description "Enable foo"
+         :declarations ["nixos/modules/foo.nix"]))
+    (let ((nixos--nixpkgs-root nil)
+          (data (gethash "services.foo.enable" nixos--options-cache)))
+      (cl-letf (((symbol-function 'pop-to-buffer)
+                 (lambda (buf &optional _action) (set-buffer buf))))
+        (nixos--display-option "services.foo.enable" data)
+        (goto-char (point-min))
+        (search-forward "Declared by")
+        (beginning-of-line)
+        (nixos-browse-toggle-section)
+        (nixos--display-option "services.foo.enable" data)
+        (should (equal (nixos--browse-collapsed-sections) '("Declared by")))
+        ;; Data that differs renders again, so the fold goes away.
+        (let ((changed (copy-hash-table data)))
+          (puthash "description" "Enable foo, now with more text." changed)
+          (nixos--display-option "services.foo.enable" changed)
+          (should-not (nixos--browse-collapsed-sections)))
+        (kill-buffer)))))
+
+(ert-deftest nixos-browse-table-revert-keeps-tags ()
+  "A revert of an unchanged table keeps the tags of the rows."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("a.one" :description "First")
+       '("b.two" :description "Second"))
+    (let ((nixos-option-groups nil)
+          (buf nil))
+      (cl-letf (((symbol-function 'switch-to-buffer)
+                 (lambda (buffer &rest _) (setq buf buffer) (set-buffer buffer))))
+        (nixos-browse-options)
+        (with-current-buffer buf
+          (goto-char (point-min))
+          (should (zerop (forward-line 1)))
+          (tabulated-list-put-tag ">")
+          (should (eq (char-after (line-beginning-position)) ?>))
+          (revert-buffer)
+          (should (eq (char-after (line-beginning-position)) ?>))
+          (kill-buffer))))))
+
+(ert-deftest nixos-browse-table-revert-prints-a-new-entry ()
+  "A revert prints the table again when the cache gained an entry."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("a.one" :description "First"))
+    (let ((nixos-option-groups nil)
+          (buf nil))
+      (cl-letf (((symbol-function 'switch-to-buffer)
+                 (lambda (buffer &rest _) (setq buf buffer) (set-buffer buffer))))
+        (nixos-browse-options)
+        (with-current-buffer buf
+          (puthash "b.two"
+                   (let ((entry (make-hash-table :test 'equal)))
+                     (puthash "description" "Second" entry)
+                     entry)
+                   nixos--options-cache)
+          (revert-buffer)
+          (goto-char (point-min))
+          (should (search-forward "b.two" nil t))
+          (kill-buffer))))))
+
 (ert-deftest nixos-display-option-sets-default-directory ()
   "`nixos--display-option' sets `default-directory' to first declaration."
   (nixos-test--with-options
@@ -952,7 +1020,7 @@ converted to strings by stripping the leading colon."
       (should (functionp nixos--browse-table-entries-function))
       (should (memq 'nixos--browse-table-reload
                     tabulated-list-revert-hook))
-      (should (eq revert-buffer-function #'tabulated-list-revert))
+      (should (eq revert-buffer-function #'nixos--browse-table-revert))
       (nixos--browse-table-reload)
       (should (= (length tabulated-list-entries) 2))
       (setq-local nixos--browse-name-list '("services.foo.enable"))
