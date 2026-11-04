@@ -405,6 +405,78 @@ second display proves that the buffer was not erased."
           (should (search-forward "b.two" nil t))
           (kill-buffer))))))
 
+(ert-deftest nixos-point-record-names-a-line ()
+  "`nixos--point-record' names the text, the ordinal and the column."
+  (with-temp-buffer
+    (insert "alpha\nbeta\ngamma\nbeta\n")
+    (goto-char (point-min))
+    (search-forward "beta")
+    (let ((record (nixos--point-record)))
+      (should (equal (plist-get record :text) "beta"))
+      (should (zerop (plist-get record :ordinal)))
+      (should (zerop (plist-get record :offset)))
+      (should (= (plist-get record :column) 4))
+      ;; A line that grows above point moves the position of the line.
+      (goto-char (point-min))
+      (insert "a longer line at the top\n")
+      (goto-char (nixos--record-position record))
+      (should (equal (nixos--line-text) "beta"))
+      (should (= (current-column) 4)))))
+
+(ert-deftest nixos-point-record-counts-equal-lines ()
+  "The ordinal picks the right one of two equal lines."
+  (with-temp-buffer
+    (insert "alpha\nbeta\ngamma\nbeta\n")
+    (goto-char (point-min))
+    (forward-line 3)
+    (let ((record (nixos--point-record)))
+      (should (equal (plist-get record :text) "beta"))
+      (should (= (plist-get record :ordinal) 1))
+      (goto-char (point-min))
+      (insert "a longer line at the top\n")
+      (goto-char (nixos--record-position record))
+      (should (= (line-number-at-pos) 5)))))
+
+(ert-deftest nixos-point-record-leans-on-a-blank-line ()
+  "A blank line keeps its distance from the line above it."
+  (with-temp-buffer
+    (insert "alpha\n\nbeta\n")
+    (goto-char (point-min))
+    (forward-line 1)
+    (let ((record (nixos--point-record)))
+      (should (equal (plist-get record :text) "alpha"))
+      (should (= (plist-get record :offset) 1))
+      (goto-char (point-min))
+      (insert "a longer line at the top\n")
+      (goto-char (nixos--record-position record))
+      (should (= (line-number-at-pos) 3))
+      (should (equal (nixos--line-text) "")))))
+
+(ert-deftest nixos-browse-refresh-keeps-point-by-line ()
+  "A refresh keeps point on its field when the data above it changed."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable"
+         :description "one\ntwo\nthree"
+         :declarations ["nixos/modules/foo.nix"]))
+    (let* ((nixos--nixpkgs-root nil)
+           (data (gethash "services.foo.enable" nixos--options-cache))
+           (changed (copy-hash-table data)))
+      (puthash "description" "one\ntwo, which runs much longer now\nthree"
+               changed)
+      (cl-letf (((symbol-function 'pop-to-buffer)
+                 (lambda (buf &optional _action) (set-buffer buf))))
+        (nixos--display-option "services.foo.enable" data)
+        (goto-char (point-min))
+        (search-forward "Example:")
+        (let ((column (current-column)))
+          (cl-letf (((symbol-function 'nixos-option)
+                     (lambda (name) (nixos--display-option name changed))))
+            (nixos-browse-refresh))
+          (should (string-prefix-p "Example:" (nixos--line-text)))
+          (should (= (current-column) column)))
+        (kill-buffer)))))
+
 (ert-deftest nixos-display-option-sets-default-directory ()
   "`nixos--display-option' sets `default-directory' to first declaration."
   (nixos-test--with-options

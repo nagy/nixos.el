@@ -283,6 +283,21 @@ the folded names before a render, and
 Outline hiding edits a text property, so it runs under
 `inhibit-read-only`.
 
+### Point keeping across a refresh
+
+A refresh erases the buffer, so `nixos-browse-refresh` and
+`nixos--flake-overview-refresh` record the line of point before the
+render and restore it after the render.  A record names the text of
+the line, its ordinal among the equal lines above it, the number of
+lines from that line to the line of point, and the column.  It does
+not name a buffer position, because a render can change the length
+of a line above point.
+
+A blank line has no text of its own, so it leans on the nearest line
+above that carries text, and the record keeps the distance.  A
+column clips to the end of a shorter line.  When the buffer holds
+fewer equal lines than the ordinal, the last one serves.
+
 ### Render skip
 
 Each detail display function wraps its body in

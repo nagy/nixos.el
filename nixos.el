@@ -643,6 +643,96 @@ middle of it."
     (nreverse index)))
 
 
+;;; Point keeping
+
+;; A refresh erases the buffer, so it records the line of point before
+;; the render and restores the line after it.  The record names the text
+;; of the line and not its buffer position, because a render can change
+;; the length of a line above it: the number of a build inputs heading
+;; or the text of a description.
+
+(defun nixos--line-text ()
+  "Return the text of the current line without properties or padding."
+  (string-trim-right
+   (buffer-substring-no-properties (line-beginning-position)
+                                   (line-end-position))))
+
+(defun nixos--line-occurrence (text)
+  "Return the number of lines above point that hold TEXT.
+The count is the ordinal of the line of point among the equal
+lines of the buffer, so a refresh keeps the right one of two equal
+lines."
+  (let ((origin (line-beginning-position)))
+    (save-excursion
+      (goto-char (point-min))
+      (let ((count 0))
+        (while (< (point) origin)
+          (when (equal (nixos--line-text) text)
+            (setq count (1+ count)))
+          (forward-line 1))
+        count))))
+
+(defun nixos--point-record (&optional position)
+  "Return a record of the line at POSITION, or nil.
+POSITION defaults to point.  The record holds the text of the line,
+its ordinal among the equal lines above it, the number of lines
+from the line that carries the text to the line of POSITION, and
+the column of POSITION.  A line of whitespace alone leans on the
+nearest line above it, so the record keeps its distance from that
+line.  Return nil when no line of the buffer carries text."
+  (let ((offset 0)
+        column
+        text)
+    (save-excursion
+      (goto-char (or position (point)))
+      (setq column (- (point) (line-beginning-position)))
+      (beginning-of-line)
+      (let ((done nil))
+        (while (not done)
+          (setq text (nixos--line-text))
+          (cond ((not (string-empty-p text)) (setq done t))
+                ((bobp) (setq done t))
+                (t
+                 (setq offset (1+ offset))
+                 (forward-line -1))))))
+    (unless (string-empty-p text)
+      (list :text text
+            :ordinal (nixos--line-occurrence text)
+            :offset offset
+            :column column))))
+
+(defun nixos--record-position (record)
+  "Return the buffer position that RECORD names, or nil.
+The position is the start of the line that the text of RECORD
+names, moved down by the recorded number of lines and set to the
+recorded column.  A line with fewer columns clips the column to
+its end.  When the buffer holds fewer equal lines than the
+ordinal, the last one serves, so the reader stays in the same part
+of the buffer."
+  (when record
+    (let ((text (plist-get record :text))
+          (ordinal (plist-get record :ordinal))
+          (offset (plist-get record :offset))
+          (column (plist-get record :column))
+          (index 0)
+          found
+          last)
+      (save-excursion
+        (goto-char (point-min))
+        (while (re-search-forward (concat "^" (regexp-quote text) "[ \t]*$")
+                                  nil t)
+          (setq last (line-beginning-position))
+          (when (and (not found) (>= index ordinal))
+            (setq found last))
+          (setq index (1+ index)))
+        (when (or found last)
+          (goto-char (or found last))
+          (forward-line offset)
+          (unless (zerop column)
+            (goto-char (min (+ (line-beginning-position) column)
+                            (line-end-position))))
+          (point))))))
+
 ;;; Render skip
 
 (defvar-local nixos--browse-rendered nil
@@ -719,7 +809,7 @@ convention."
   (interactive)
   (unless nixos--browse-name
     (user-error "Nothing to refresh"))
-  (let ((pt (point))
+  (let ((record (nixos--point-record))
         (collapsed (nixos--browse-collapsed-sections)))
     (cl-case nixos--browse-type
       (option (nixos-option nixos--browse-name))
@@ -738,7 +828,7 @@ convention."
                              nixos--browse-name))))
       (t (user-error "Unknown browse type %s" nixos--browse-type)))
     (nixos--browse-restore-sections collapsed)
-    (goto-char pt)))
+    (goto-char (or (nixos--record-position record) (point-min)))))
 
 (defun nixos--field (label value &optional face)
   "Insert a LABEL field with VALUE into the current buffer.
@@ -1238,14 +1328,16 @@ through `abbreviate-file-name'; URLs and flake references such as
 (defun nixos--flake-overview-refresh ()
   "Refresh the flake overview buffer.
 A refresh runs `nix flake show' again on the reference of the
-buffer and keeps the folds of the reader."
+buffer, keeps the folds of the reader and keeps point on its line."
   (interactive)
   (let ((ref nixos--browse-flake-ref)
+        (record (nixos--point-record))
         (collapsed (nixos--browse-collapsed-sections)))
     (unless ref
       (user-error "No flake reference in this buffer"))
     (nixos-flake ref)
-    (nixos--browse-restore-sections collapsed)))
+    (nixos--browse-restore-sections collapsed)
+    (goto-char (or (nixos--record-position record) (point-min)))))
 
 (defun nixos--display-flake-overview (ref cache &optional meta)
   "Create a whole-flake detail buffer for REF from CACHE.
