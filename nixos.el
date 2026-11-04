@@ -75,6 +75,7 @@
 ;;; Code:
 
 (require 'json)
+(require 'goto-addr)
 (require 'outline)
 (require 'tabulated-list)
 (require 'thingatpt)
@@ -487,7 +488,11 @@ ACTION."
   (setq-local outline-level (lambda () 1))
   (setq-local outline-minor-mode-highlight nil)
   (outline-minor-mode 1)
-  (setq-local imenu-create-index-function #'nixos--browse-imenu-index))
+  (setq-local imenu-create-index-function #'nixos--browse-imenu-index)
+  ;; A description, an example and a flake description can hold a URL.
+  ;; `goto-address-mode' marks it with an overlay, so the text of the
+  ;; buffer stays plain and the URL opens with its own keys.
+  (goto-address-mode 1))
 
 (defvar-local nixos--browse-type nil
   "The type of item in the current browse buffer: `option' or `package'.")

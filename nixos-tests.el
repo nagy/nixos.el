@@ -477,6 +477,24 @@ second display proves that the buffer was not erased."
           (should (= (current-column) column)))
         (kill-buffer)))))
 
+(ert-deftest nixos-browse-links-urls-in-a-text ()
+  "A URL in a detail buffer becomes a link through `goto-address-mode'.
+The link is an overlay, so a copy of the buffer text stays plain."
+  (with-temp-buffer
+    (insert "See https://example.com/foo for details.\n")
+    (nixos-browse-mode)
+    (should goto-address-mode)
+    (jit-lock-fontify-now)
+    (let ((links (cl-remove-if-not (lambda (overlay)
+                                     (overlay-get overlay 'goto-address))
+                                   (overlays-in (point-min) (point-max)))))
+      (should links)
+      (should (equal (buffer-substring-no-properties
+                      (overlay-start (car links))
+                      (overlay-end (car links)))
+                     "https://example.com/foo"))
+      (should-not (get-text-property (point-min) 'goto-address)))))
+
 (ert-deftest nixos-display-option-sets-default-directory ()
   "`nixos--display-option' sets `default-directory' to first declaration."
   (nixos-test--with-options

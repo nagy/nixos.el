@@ -257,6 +257,12 @@ the enum instead.
 `revert-buffer-function` (`nixos-browse-refresh`); no explicit
 `read-only-mode` calls or custom `g` bindings.
 
+The mode enables `goto-address-mode`, so a URL inside a description,
+an example value or a flake description becomes a link.  The link is
+an overlay, so the text of the buffer stays plain, and
+`goto-address-mode` brings its own keys.  Do not insert a text
+button for a URL that a description already holds.
+
 ### Detail buffer sections
 
 `nixos-browse-mode` folds detail sections through `outline-minor-mode`.
