@@ -1320,6 +1320,15 @@ buffer."
   (nixos-test--with-option-table
     (should-error (nixos-browse-export-nix) :type 'user-error)))
 
+(ert-deftest nixos-browse-table-remaps-the-export-major-modes ()
+  "A key bound to a major mode exports the table instead.
+A user key that runs `nix-mode' or `markdown-ts-mode' anywhere turns
+into the matching export while point sits in a table."
+  (nixos-test--with-package-table
+    (should (eq (command-remapping 'nix-mode) 'nixos-browse-export-nix))
+    (should (eq (command-remapping 'markdown-ts-mode)
+                'nixos-browse-export-markdown))))
+
 
 ;;; Embark
 

@@ -325,6 +325,11 @@ the enum instead.
   export quotes a segment that is no identifier.  Both live under the
   `e` prefix keymap `nixos-browse-table-export-map`, and each writes
   a `special-mode` buffer through `nixos--export-buffer`.
+- Both table maps remap the `nix-mode` and `markdown-ts-mode`
+  commands to the export commands.  A user key that runs one of
+  those major modes elsewhere runs `nixos-browse-export-nix` or
+  `nixos-browse-export-markdown` while point sits in a table.  The
+  remap target names a symbol, so both modes stay optional.
 - A table refits its columns to the window.
   `nixos--browse-table-fit-widths` shrinks a middle column to 8 and
   then the name column to `nixos-browse-table-name-min-width`, so the

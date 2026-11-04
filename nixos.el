@@ -2168,6 +2168,8 @@ fit starts from.  Internal use only."
          "o" #'nixos-browse-table-other-window
          "w" #'nixos-browse-table-copy-name
          "e" nixos-browse-table-export-map
+         "<remap> <nix-mode>" #'nixos-browse-export-nix
+         "<remap> <markdown-ts-mode>" #'nixos-browse-export-markdown
          "{" #'nixos--browse-table-narrow-column
          "}" #'nixos--browse-table-resize-column
          "<mouse-2>" #'nixos-browse-table-other-window-mouse
