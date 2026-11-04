@@ -22,6 +22,8 @@ interfaces for browsing NixOS options and Nix packages from Emacs.
 - Local project evaluation (=nixos-package-local=) and tarball URLs (=nixos-package-url=)
 - Org link types: =nixos-package:=, =nixos-option:=, =nixos-package-search:=, =nixos-option-search:=
   (opt-in module, enable with =(with-eval-after-load 'org (require 'ol-nixos))=)
+- Evil bindings for the detail buffers and the tables (opt-in module,
+  enable with =(with-eval-after-load 'evil (require 'evil-nixos))=)
 - Completion annotations, eldoc, and bookmark support
 
 * Usage
@@ -39,6 +41,33 @@ attributes.
 The table shrinks its columns when the window is narrow, so the
 description stays visible.  Use ={= and =}= to resize a column by hand;
 a frame resize fits the columns again.
+
+* Evil
+
+Opt in with:
+
+#+begin_src emacs-lisp
+  (with-eval-after-load 'evil (require 'evil-nixos))
+#+end_src
+
+A detail buffer and a table then start in the Evil normal state.  The
+nixos commands keep their keys, and Evil's =g= prefix stays a prefix:
+
+| Key   | Detail buffer                  | Table                    |
+|-------+--------------------------------+--------------------------|
+| =gr=  | refresh                        | refresh                  |
+| =gb=  | open search.nixos.org          | open search.nixos.org    |
+| =gR=  | show the requisites            |                          |
+| =gd=  | visit the source position      |                          |
+| =RET= | open the output (flake view)   | open the row             |
+| =o=   |                                | open the row elsewhere   |
+| =w=   | copy the store path            | copy the row name        |
+| =e=   |                                | export the visible rows  |
+| =TAB= | fold the section at point      |                          |
+| ={= =}= |                              | resize a column          |
+
+The keys =q=, =r= and =b= stay with Evil in a detail buffer, and =gg=,
+=gf= and =gJ= keep their Evil meaning beside the nixos =g= keys.
 
 * License
 

@@ -71,6 +71,16 @@
                   --option flake-registry $PWD/empty-registry.json \
                   search path:${pkgs.path} --json "" | jq --sort-keys > $out
               '';
+
+          # Emacs with Evil, for the opt-in Evil layer.  The package itself
+          # needs no Evil: evil-nixos.el byte-compiles without it and
+          # loads it only when a user does.
+          emacsWithEvil = pkgs.emacs.pkgs.withPackages (
+            epkgs: [
+              epkgs.evil
+              epkgs.nix-mode
+            ]
+          );
         in
         {
           packages.nixos = melpaBuild {
@@ -110,6 +120,14 @@
               emacs --batch -L . \
                 -l nixos-tests.elc \
                 -f ert-run-tests-batch-and-exit
+              # The Evil layer is opt-in, so it needs an Emacs that can
+              # load Evil.  The package itself never loads it.
+              ${emacsWithEvil}/bin/emacs --batch -L . \
+                --eval '(setq byte-compile-error-on-warn t)' \
+                -f batch-byte-compile evil-nixos.el evil-nixos-tests.el
+              ${emacsWithEvil}/bin/emacs --batch -L . \
+                -l evil-nixos-tests.elc \
+                -f ert-run-tests-batch-and-exit
               runHook postCheck
             '';
 
@@ -145,7 +163,9 @@
             # A real Emacs for interactive testing of the built package:
             #   nix build
             #   emacs -l result/share/emacs/site-lisp/elpa/nixos-*/nixos-autoloads.el
-            packages = [ pkgs.emacs ];
+            # Evil and nix-mode come with it, so the opt-in Evil layer
+            # loads without extra setup.
+            packages = [ emacsWithEvil ];
           };
         };
     };

@@ -4,9 +4,10 @@
 
 Emacs package providing interactive `completing-read` and
 `tabulated-list-mode` interfaces for browsing NixOS options, Nix
-packages and Nix flake outputs.  Two source files: `nixos.el` (core)
-and `ol-nixos.el` (Org link types).  Built via `default.nix`
-(melpaBuild, AGPL3+).  Tests in `nixos-tests.el`.
+packages and Nix flake outputs.  Three source files: `nixos.el`
+(core), `ol-nixos.el` (Org link types) and `evil-nixos.el` (Evil
+bindings).  Built via `flake.nix` (melpaBuild, AGPL3+).  Tests in
+`nixos-tests.el` and `evil-nixos-tests.el`.
 
 ## Build & test
 
@@ -14,7 +15,12 @@ and `ol-nixos.el` (Org link types).  Built via `default.nix`
 nix build                                # build + run tests
 nix flake check                          # also builds the package
 emacs --batch -L . -l nixos-tests.el -f ert-run-tests-batch-and-exit
+emacs --batch -L . -l evil-nixos-tests.el -f ert-run-tests-batch-and-exit
 ```
+
+The Evil test file needs Evil, so `checkPhase` runs it with the
+`emacsWithEvil` wrapper of the flake.  The package itself never loads
+Evil, and `evil-nixos.el` byte-compiles without it.
 
 To skip the NixOS options JSON eval, pass an existing JSON file to the
 builder (see flake.nix; the old `nixosOptionsJson ? "/etc/..."`
@@ -57,7 +63,49 @@ Opt-in module, like Org's own `ol-*` modules: it does a plain
 `(with-eval-after-load 'org (require 'ol-nixos))` in their config.
 nixos.el does not know it exists.
 
+### evil-nixos.el (Evil bindings, ~210 lines)
+
+Opt-in module with the same shape as `ol-nixos.el`: it does
+`(require 'nixos)` and the user enables it with
+`(with-eval-after-load 'evil (require 'evil-nixos))`.  `nixos.el`
+never loads it.
+
+The file byte-compiles without Evil, so the package build needs no
+Evil dependency.  It declares the Evil functions with
+`declare-function` and the two state keymaps with value-less
+`defvar`, and it uses `evil-define-key*` (a function) rather than the
+`evil-define-key` macro.  A `(require 'evil nil t)` at the top loads
+Evil when a user did not, and an explicit error reports a missing
+Evil instead of a void function.
+
 ## Conventions
+
+### Evil bindings
+
+An Evil state keymap takes precedence over a major mode keymap, so
+every nixos command that must keep its key goes into the auxiliary
+keymap of the mode through `evil-define-key*`.  The three browse modes
+start in the normal state, through `evil-set-initial-state`.
+
+A key that opens Evil's `g` prefix goes into a prefix keymap of its
+own, built by `evil-nixos--g-prefix`.  That keymap takes the normal
+state `g` prefix as its parent and copies the motion state keys that
+the parent lacks.  Without the parent, `gg` and `gf` break.  Without
+the copy, `gg` breaks, because it lives in the motion state prefix.
+
+`nixos-flake-overview-mode-map` installs itself with `use-local-map`,
+so it is the active local map of its buffer.  Evil finds no
+`nixos-browse-mode-map` binding there, and its auxiliary keymap does
+not inherit the auxiliary keymap of the parent.  The file therefore
+binds the overview map on its own.
+
+`evil-nixos-goto-definition` reads `nixos--browse-position` and falls
+back to `evil-goto-definition`.
+
+`evil-nixos-tests.el` asserts the bindings of every auxiliary keymap
+and the behaviour of `TAB`, `gr` and `gd`.  `execute-kbd-macro` does
+not reach an Evil state keymap in batch mode, so the tests take the
+command from `key-binding` and call it.
 
 ### Byte-compiler silencing
 
@@ -662,6 +710,7 @@ promises that the same arguments always give the same value.
 | nix-mode | install: hard (Package-Requires); runtime: soft (guarded) | `nix-instantiate-executable` for package metadata; the value-less `defvar` makes the nix paths inert until nix-mode (or the user) sets the executable |
 | nix (CLI) | soft (guarded) | `nix-executable` (from nix-mode) for `nix flake show --json`; `nixos--call-flake-show` guards on `boundp` + `stringp` |
 | org-mode | soft | `ol-nixos.el` Org link types (opt-in `(require 'ol-nixos)`) |
+| evil | soft | `evil-nixos.el` bindings (opt-in `(require 'evil-nixos)`) |
 | embark | soft | export + actions |
 
 ### Faces
