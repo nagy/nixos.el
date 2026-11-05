@@ -1,4 +1,4 @@
-;;; nixos.el --- Browse NixOS options and packages -*- lexical-binding: t -*-
+;;; nixos.el --- Browse NixOS options and packages  -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026  Daniel Nagy
 
@@ -94,7 +94,6 @@
 
 (defcustom nixos-options-json-file "/etc/nixos-options.json"
   "Path to the NixOS options JSON file.
-
 This file should contain a flat JSON object where each key is a
 dotted option path (e.g. \"services.postgresql.enable\") and each
 value is an object with at least a \"description\" field.
@@ -107,7 +106,6 @@ build time."
 
 (defcustom nixos-search-json-file "/etc/nixos-search.json"
   "Path to the Nix package search JSON file.
-
 This file should contain the output of `nix search --json'.
 Keys typically look like \"legacyPackages.x86_64-linux.htop\".
 
@@ -137,11 +135,11 @@ substituted with a Nix store path at build time."
   :group 'nixos)
 
 (defcustom nixos-option-groups t
-  "Group the options table by top-level attribute.
-Non-nil splits the table into one block per first dotted segment
-(e.g. \"services\", \"programs\") and sorts inside each block.  A
-name without a dot lands in its own block.  Set it to nil for one
-flat table, then press \\[revert-buffer] in the table buffer."
+  "Non-nil if the options table groups rows by top-level attribute.
+A non-nil value splits the table into one block per first dotted
+segment, as in \"services\" or \"programs\", and sorts inside each
+block.  A name without a dot lands in its own block.  Set it to nil
+for one flat table, then press \\[revert-buffer] in the table buffer."
   :type 'boolean
   :group 'nixos)
 
@@ -419,13 +417,13 @@ prefix stripped).  Shared by table bookmarks and the Org
 ;;; Options
 
 (defun nixos--option-annotate (candidate)
-  "Completion annotation function for NixOS option CANDIDATE."
+  "Return the completion annotation for NixOS option CANDIDATE."
   (nixos--annotate
    (nixos--slurp-description
     (gethash candidate (nixos--options-load)))))
 
 (defun nixos--option-collection (string predicate action)
-  "Completion collection for NixOS options.
+  "Return the completion collection for NixOS options.
 See `completing-read' for the meaning of STRING, PREDICATE and
 ACTION."
   (pcase action
@@ -442,14 +440,14 @@ ACTION."
 ;;; Packages
 
 (defun nixos--package-annotate (candidate)
-  "Completion annotation function for Nix package CANDIDATE."
+  "Return the completion annotation for Nix package CANDIDATE."
   (let ((full-key (concat nixos--package-key-prefix candidate)))
     (nixos--annotate
      (nixos--slurp-description
       (gethash full-key (nixos--packages-load))))))
 
 (defun nixos--package-collection (string predicate action)
-  "Completion collection for Nix packages.
+  "Return the completion collection for Nix packages.
 See `completing-read' for the meaning of STRING, PREDICATE and
 ACTION."
   (pcase action
@@ -513,12 +511,13 @@ source.")
 
 (defvar-local nixos--browse-flake-ref nil
   "The flake reference for the node in the current browse buffer.
-Used by `nixos-browse-refresh' and bookmarks to re-run\n`nix flake show' for the same flake.")
+Used by `nixos-browse-refresh' and bookmarks to re-run
+`nix flake show' for the same flake.")
 
 (defvar-local nixos--browse-position nil
-  "Source position (`meta.position') of the package in the current
-browse buffer, if any.  A string of the form
-\"/nix/store/.../package.nix:LINE\".")
+  "Source position (`meta.position') of the package in the current buffer.
+The value is a string of the form \"/nix/store/.../package.nix:LINE\",
+or nil when the package has no such field.")
 
 (defun nixos--browse-setup (type name &optional out-path source position)
   "Configure the current buffer for browsing TYPE (option or package) NAME.
@@ -766,7 +765,7 @@ This shows requisites, references, derivers, etc."
   (require 'nix-store nil t)
   (if (fboundp 'nix-store-show-path)
       (nix-store-show-path nixos--browse-out-path)
-    (user-error "nix-store-mode not available; install nix-mode")))
+    (user-error "Requires the nix-store-mode package; install nix-mode")))
 
 (defun nixos-browse-copy-store-path ()
   "Copy the store path of the current package to the kill ring."
@@ -797,7 +796,7 @@ This shows requisites, references, derivers, etc."
   "Open the current option or package on search.nixos.org."
   (interactive)
   (when (eq nixos--browse-type 'flake)
-    (user-error "search.nixos.org does not index flake nodes"))
+    (user-error "Flake nodes are not on search.nixos.org"))
   (unless nixos--browse-name
     (user-error "No option or package in this buffer"))
   (let ((url (if (eq nixos--browse-type 'option)
@@ -905,11 +904,11 @@ imenu index of the buffer lists it."
 
 (defun nixos--display-package (name info &optional source)
   "Create a formatted detail buffer for Nix package NAME with INFO.
-INFO is an alist from `nixos--package-meta' with keys `meta'
-(hash table of package metadata), `outPath' (string store path),
-`version' (string), `buildInputs' and `nativeBuildInputs' (vectors
-of dep attrsets with `name' and `storePath' keys), `pname'
-(string) and `repository' (URL string).
+INFO is an alist from `nixos--package-meta'.  Its `meta' key holds
+a hash table of package metadata, `outPath' a string store path,
+`version' a string, `buildInputs' and `nativeBuildInputs' vectors
+of dep attrsets with `name' and `storePath' keys, `pname' a string,
+and `repository' a URL string.
 
 SOURCE is the package origin as understood by
 `nixos--browse-source': nil for a nixpkgs package, (local . DIR)
@@ -1137,7 +1136,6 @@ before `nix' sees it (Nix does not expand `~' in flake refs)."
 
 (defun nixos--call-flake-metadata (ref)
   "Run `nix flake metadata --json' for REF, return (DATA . ERROR).
-
 DATA is the parsed hash table on success; ERROR is the stderr on
 failure.  Returns nil entirely if the `nix' executable is missing.
 Unlike `nixos--call-flake-show', this needs no evaluation and
@@ -1175,10 +1173,9 @@ lastModified, inputs)."
 
 (defun nixos-flake-visit-output ()
   "Display details for the flake output at point.
-
 Intended for `nixos--display-flake-overview' buffers, where each
-output line is an \`insert-text-button' carrying its node path as
-\='button-data'.  Opens that node's detail buffer."
+output line is an `insert-text-button' that carries its node path as
+`button-data'.  Opens that node's detail buffer."
   (interactive)
   (let ((btn (button-at (point))))
     (if btn
@@ -1189,7 +1186,6 @@ output line is an \`insert-text-button' carrying its node path as
 
 (defun nixos--flake-input-source (node)
   "Return a display string for an input NODE: source (and date), or nil.
-
 The source is formatted from the node's \"locked\"/\"original\"
 attrsets.  For github inputs this is \"github:OWNER/REPO/REV\"; for
 local path/file inputs the URL is abbreviated.  When a lastModified
@@ -1229,7 +1225,6 @@ official `nix flake metadata' input tree."
 
 (defun nixos--flake-input-tree (nodes root)
   "Return the input tree display lines for NODES rooted at ROOT.
-
 NODES is the \"locks.nodes\" hash table and ROOT the node id of the
 flake itself.  Walks each node's \"inputs\", rendering a nested tree
 matching the official `nix flake metadata' output: a non-last sibling
@@ -1277,7 +1272,6 @@ string value names the child node to recurse into."
 
 (defun nixos--flake-metadata-fields (meta)
   "Return an alist of ((LABEL . VALUE) ...) from flake metadata META.
-
 META is the hash table from `nix flake metadata --json', or nil.
 Only human-meaningful fields are extracted: description, path, url,
 revision, last-modified and inputs.  Sparse values are omitted.  The
@@ -1346,7 +1340,6 @@ buffer, keeps the folds of the reader and keeps point on its line."
 
 (defun nixos--display-flake-overview (ref cache &optional meta)
   "Create a whole-flake detail buffer for REF from CACHE.
-
 CACHE is the path-keyed leaf hash table from
 `nixos--flake-flatten'.  META is optional data from
 `nix flake metadata --json' shown as flake-level fields above the
@@ -1455,12 +1448,11 @@ node's detail buffer via `nixos--display-flake'."
 ;;;###autoload
 (defun nixos-flake (&optional flake-ref)
   "Show the outputs of a Nix flake in a detail buffer.
-
-Runs `nix flake show --json' on FLAKE-REF and presents a
-whole-flake overview: the reference plus a clickable list of every
-leaf node — derivations, apps, NixOS configurations, templates,
-etc. — with its full dotted path.  Pressing \[nixos-flake-visit-output]
-(or clicking) on a node opens that node's detail buffer.
+Runs `nix flake show --json' on FLAKE-REF and presents a whole-flake
+overview: the reference plus a clickable list of every leaf node,
+such as derivations, apps, NixOS configurations and templates, with
+its full dotted path.  Pressing \[nixos-flake-visit-output] or clicking
+on a node opens that node's detail buffer.
 
 Called interactively without a prefix, FLAKE-REF defaults to the
 project root when it is a flake (contains flake.nix); otherwise it
@@ -1486,7 +1478,7 @@ argument or from a bookmark)."
                 nixos--flake-ref ref)
           (nixos--display-flake-overview ref cache meta)))
        ((consp show)
-        (user-error "flake show failed:\n%s" (cdr show)))
+        (user-error "Flake show failed:\n%s" (cdr show)))
        (t (user-error "`nix' executable not found (check `nix-executable')"))))))
 
 (defun nixos--read-flake-ref ()
@@ -1496,7 +1488,6 @@ argument or from a bookmark)."
 
 (defun nixos--project-flake-ref ()
   "Return the project root when it is a flake, else nil.
-
 The root is the directory returned by `project-current' (via
 `project-root'); it qualifies only when it contains a flake.nix."
   (let ((root (and (fboundp 'project-current)
@@ -1522,7 +1513,12 @@ The root is the directory returned by `project-current' (via
    "     (depInfo (pkg.nativeBuildInputs or []))"
    "     (pkg.pname or \"\")"
    "     (pkg.src.meta.homepage or pkg.src.url or \"\")"
-   "     (pkg.meta.position or \"\") ]"))
+   "     (pkg.meta.position or \"\") ]")
+  "Tail of a nix-instantiate expression that extracts one package.
+The value yields a JSON array of the metadata, the store path, the
+version, the build inputs, the native build inputs, the pname, the
+homepage URL and the source position.  Shared by the nixpkgs, the
+local and the URL package paths.")
 
 (defun nixos--parse-package-result (result)
   "Parse the JSON RESULT vector from nix-instantiate into an alist.
@@ -1552,7 +1548,7 @@ Returns a cons cell (ALIST . \"\") on success, or (nil . ERROR-MSG)."
 
 (defun nixos--call-nix-package-expr (expr &rest extra-args)
   "Call nix-instantiate with EXPR and EXTRA-ARGS, return (RESULT . STDERR).
-EXTRA-ARGS are passed directly to call-process before \"-E\".
+EXTRA-ARGS are passed directly to `call-process' before \"-E\".
 
 Returns a cons cell (ALIST . STDERR): on success ALIST is the
 parsed package alist and STDERR is an empty string.  On failure
@@ -1978,7 +1974,7 @@ lands under \"services\".  A name without a dot gets its own group."
     nixos--option-group-other))
 
 (defun nixos--group-entries (entries group-function)
-  "Split ENTRIES into `tabulated-list-groups' groups.
+  "Split ENTRIES into the groups of variable `tabulated-list-groups'.
 ENTRIES has the shape of `tabulated-list-entries'.  GROUP-FUNCTION
 takes an entry ID and returns a group name.  Groups follow group
 name order, and `tabulated-list-print' sorts each group on its own."
@@ -2392,9 +2388,10 @@ The text pastes into `environment.systemPackages'."
   "n" #'nixos-browse-export-nix)
 
 (defun nixos--browse-table-context-command (position buffer function)
-  "Return a command that moves point to POSITION in BUFFER, then calls FUNCTION.
-A context menu click leaves point alone, and the menu command can run
-in another buffer, so the command restores both first."
+  "Return a command that moves point to POSITION and calls FUNCTION.
+The command runs in BUFFER.  A context menu click leaves point
+alone, and the menu command can run in another buffer, so the
+command restores both first."
   (lambda ()
     (interactive)
     (when (buffer-live-p buffer)
@@ -2453,6 +2450,14 @@ stays.  A table mode adds this function to
                                              visit-fn url-fmt cache-fn
                                              key-fn group-fn width-fn)
   "Define a tabulated-list browse mode for TYPE (a symbol, e.g. option).
+TYPE names the mode, its keymap, its command and its helper
+functions.  MODE-LABEL is the mode line indicator.  BUFFER-NAME is
+the name of the table buffer.  COLUMNS is the value of
+`tabulated-list-format', and SORT-KEY the initial sort key.
+EXTRACT-FIELDS holds one form per column after the name, and
+VISIT-FN is the command that opens a detail buffer.  URL-FMT is the
+URL template of the search command.  CACHE-FN returns the cache
+hash table, and KEY-FN shortens a cache key to an entry name.
 GROUP-FN, when non-nil, takes an entry ID and returns the group
 name of that entry.  WIDTH-FN, when non-nil, takes the entries and
 the declared column widths and returns the widths that a window
@@ -2565,8 +2570,7 @@ appear in the list." typestr)
 
        ;;;###autoload
        (defun ,cmd (&optional name-list name-prefix)
-         ,(format "Display Nix %s in a browseable table.
-
+         ,(format "Display Nix %s in a browsable table.
 %s are shown with sortable columns.
 \<%s>
 \\[%s] on an entry to view full details,
@@ -2622,8 +2626,8 @@ to filter the view in-place." typestr typestr mode-map visit search-url)
 ;;; Eldoc
 
 (defun nixos-eldoc-function (callback &rest _ignored)
-  "Eldoc documentation function for NixOS options at point.
-Calls CALLBACK with the option description when point is on a
+  "Return eldoc documentation for the NixOS option at point.
+Call CALLBACK with the option description when point is on a
 NixOS option reference in `nix-mode'.  Only returns docs when the
 options cache is already populated (does not trigger a load)."
   (when (and (derived-mode-p 'nix-mode)
@@ -2639,8 +2643,8 @@ options cache is already populated (does not trigger a load)."
 Add this alongside `nixos-thing-at-point-setup' in
 `nix-mode-hook' for full integration:
 
-  (add-hook \='nix-mode-hook #\='nixos-thing-at-point-setup)
-  (add-hook \='nix-mode-hook #\='nixos-eldoc-setup)"
+  (add-hook \\='nix-mode-hook #\\='nixos-thing-at-point-setup)
+  (add-hook \\='nix-mode-hook #\\='nixos-eldoc-setup)"
   (add-hook 'eldoc-documentation-functions
             #'nixos-eldoc-function nil t))
 
@@ -2684,11 +2688,11 @@ Add this alongside `nixos-thing-at-point-setup' in
 (defvar embark-general-map)
 
 (defun nixos--embark-export-option (candidates)
-  "Embark export function for NixOS option CANDIDATES."
+  "Export the NixOS option CANDIDATES to a browse table."
   (nixos-browse-options candidates))
 
 (defun nixos--embark-export-package (candidates)
-  "Embark export function for Nix package CANDIDATES."
+  "Export the Nix package CANDIDATES to a browse table."
   (nixos-browse-packages candidates))
 
 (defun nixos--embark-browse-option-url (cand)

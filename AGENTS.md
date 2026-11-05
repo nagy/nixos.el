@@ -595,6 +595,26 @@ of every leaf node; `RET`/click opens a node's own detail buffer.
   bookmarks, so `nixos--bookmark-jump`'s `cl-case` has no `flake`
   table branch (removed with `nixos-browse-flakes`).
 
+### Docstrings
+
+`emacs --batch -l checkdoc --eval '(checkdoc-file "nixos.el")'`
+reports no finding for the three source files.  Keep it that way.
+
+- A function summary starts with an imperative verb.  A variable,
+  face or group summary starts with a noun phrase.  A boolean
+  `defcustom` starts with "Non-nil if ...".
+- The summary is one sentence that stands alone, ends with a period,
+  and fits in less than 80 columns.
+- The body follows the summary line directly.  An empty line comes
+  before a later paragraph only, and before a `\\{...}` keymap
+  listing.
+- A line of the body must not start with `(` in column 0.  checkdoc
+  reads such a line as a new top-level form.
+- Quote a Lisp symbol with a plain backtick and apostrophe
+  (`` `symbol' ``).  Inside an Elisp string the `=' sequence keeps
+  the apostrophe only: write `\\='` for a quoted symbol in a code
+  sample, because `\='` renders as `='` and loses the quote.
+
 ### Test conventions
 
 - The test file is byte-compiled in `checkPhase` with

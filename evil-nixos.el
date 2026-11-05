@@ -1,4 +1,4 @@
-;;; evil-nixos.el --- Evil bindings for nixos  -*- lexical-binding: t -*-
+;;; evil-nixos.el --- Evil bindings for nixos  -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026  Daniel Nagy
 
@@ -52,7 +52,7 @@
 ;; The file byte-compiles without Evil, so the package build needs no
 ;; Evil dependency.  It still loads Evil when the user did not.
 (unless (featurep 'evil)
-  (error "evil-nixos needs Evil; load it first"))
+  (error "Load Evil before evil-nixos"))
 
 ;; Value-less defvars: silence the byte-compiler without binding the
 ;; variables, so Evil's own keymaps survive when Evil loads later.

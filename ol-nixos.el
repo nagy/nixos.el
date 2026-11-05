@@ -1,4 +1,4 @@
-;;; ol-nixos.el --- Org links to NixOS options and packages -*- lexical-binding: t -*-
+;;; ol-nixos.el --- Org links to NixOS options and packages  -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026  Daniel Nagy
 
@@ -88,7 +88,9 @@ BACKEND is the export backend."
   (nixos-option path))
 
 (defun nixos-org-option-export (path description backend _info)
-  "Export a `nixos-option:' link to search.nixos.org."
+  "Export a `nixos-option:' link to search.nixos.org.
+PATH is the option name, DESCRIPTION is the link text,
+BACKEND is the export backend."
   (nixos-org--export nixos-option-search-url-template
                      path description backend))
 
@@ -106,7 +108,9 @@ whose names contain PATH as a substring."
   (nixos-browse-packages (nixos--search-names 'package path) path))
 
 (defun nixos-org-package-search-export (path description backend _info)
-  "Export a `nixos-package-search:' link to search.nixos.org."
+  "Export a `nixos-package-search:' link to search.nixos.org.
+PATH is the search term, DESCRIPTION is the link text,
+BACKEND is the export backend."
   (nixos-org--export nixos-package-search-url-template
                      path description backend))
 
@@ -124,7 +128,9 @@ whose names contain PATH as a substring."
   (nixos-browse-options (nixos--search-names 'option path) path))
 
 (defun nixos-org-option-search-export (path description backend _info)
-  "Export a `nixos-option-search:' link to search.nixos.org."
+  "Export a `nixos-option-search:' link to search.nixos.org.
+PATH is the search term, DESCRIPTION is the link text,
+BACKEND is the export backend."
   (nixos-org--export nixos-option-search-url-template
                      path description backend))
 
