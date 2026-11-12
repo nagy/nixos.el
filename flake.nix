@@ -75,12 +75,10 @@
           # Emacs with Evil, for the opt-in Evil layer.  The package itself
           # needs no Evil: evil-nixos.el byte-compiles without it and
           # loads it only when a user does.
-          emacsWithEvil = pkgs.emacs.pkgs.withPackages (
-            epkgs: [
-              epkgs.evil
-              epkgs.nix-mode
-            ]
-          );
+          emacsWithEvil = pkgs.emacs.pkgs.withPackages (epkgs: [
+            epkgs.evil
+            epkgs.nix-mode
+          ]);
         in
         {
           packages.nixos = melpaBuild {
@@ -115,18 +113,29 @@
 
             checkPhase = ''
               runHook preCheck
-              emacs --batch -L . --eval '(setq byte-compile-error-on-warn t)' \
-                -f batch-byte-compile nixos-tests.el
-              emacs --batch -L . \
-                -l nixos-tests.elc \
-                -f ert-run-tests-batch-and-exit
-              # The Evil layer is opt-in, so it needs an Emacs that can
-              # load Evil.  The package itself never loads it.
-              ${emacsWithEvil}/bin/emacs --batch -L . \
+              # melpaBuild stages only root-level files into the build
+              # directory, so the test tree comes back from the store.
+              # A drop first keeps a second copy out at ./test/test, and
+              # --no-preserve=mode drops the read-only store bits.
+              rm -rf ./test
+              cp -r --no-preserve=mode ${./test} ./test
+              # Every test runs under the Evil-capable Emacs, so one glob
+              # covers the suite and a new test file needs no flake edit.
+              # The package itself never loads Evil.
+              emacs=${emacsWithEvil}/bin/emacs
+              $emacs --batch -L . -L test \
                 --eval '(setq byte-compile-error-on-warn t)' \
-                -f batch-byte-compile evil-nixos.el evil-nixos-tests.el
-              ${emacsWithEvil}/bin/emacs --batch -L . \
-                -l evil-nixos-tests.elc \
+                -f batch-byte-compile evil-nixos.el test/*-test.el
+              # printf repeats "-l %s" per match, which turns the glob
+              # into -l <file> pairs.  failglob makes an empty glob a
+              # shell error, so the guard fires even without `set -e'.
+              # Restore default glob semantics right after: the unquoted
+              # $test_args below relies on them.
+              shopt -s failglob
+              test_args=$(printf -- "-l %s " test/*-test.elc) || { echo 'no tests matched test/*-test.el' >&2; exit 1; }
+              shopt -u failglob
+              $emacs --batch -L . -L test \
+                $test_args \
                 -f ert-run-tests-batch-and-exit
               runHook postCheck
             '';
@@ -151,6 +160,46 @@
           };
 
           packages.default = config.packages.nixos;
+
+          # Lint gate for the files the byte compiler does not judge:
+          # headers, docstrings and prefix rules.  test/ stays inside the
+          # lint surface, so tests follow the rules of the code.
+          checks.lint =
+            pkgs.runCommand "nixos-lint"
+              {
+                # package-lint reads ELPA headers, so it needs an Emacs that
+                # can see the package metadata.
+                nativeBuildInputs = [
+                  (pkgs.emacsPackages.emacsWithPackages (epkgs: [ epkgs.package-lint ]))
+                  # Gives Emacs a writable HOME, so the builder needs no
+                  # `export HOME=$TMPDIR' line and no two checks share a
+                  # home directory.
+                  pkgs.writableTmpDirAsHomeHook
+                ];
+                src = config.packages.nixos.src;
+              }
+              ''
+                # src is pre-filtered, so copy the whole tree explicitly
+                # instead of relying on what melpaBuild staged.
+                cp -r "$src"/. .
+                # Warnings print but do not fail: nix-mode ships MELPA date
+                # versions, so no honest version pin exists, and Embark has
+                # no load-time hook other than `with-eval-after-load'.
+                emacs --batch -l package-lint \
+                  --eval '(setq package-lint-batch-fail-on-warnings nil)' \
+                  --eval '(setq package-lint-main-file "nixos.el")' \
+                  --eval '(setq package-lint--sane-prefixes (concat package-lint--sane-prefixes "\\|nixos\\|evil-nixos"))' \
+                  --eval '(advice-add (quote package-initialize) :after (lambda (&rest _) (push (cons (quote nix-mode) (list (package-desc-create :name (quote nix-mode) :version (quote (20240101 0)) :reqs nil :kind (quote single) :archive "stub" :summary "stub"))) package-alist)))' \
+                  -f package-lint-batch-and-exit \
+                  *.el test/*.el
+                # checkdoc exits 0 on findings, so gate on non-empty output.
+                lint_log=$(emacs --batch -l checkdoc \
+                  --eval '(setq checkdoc-arguments-in-order-flag t)' \
+                  --eval '(mapc (lambda (f) (checkdoc-file f)) command-line-args-left)' \
+                  *.el test/*.el 2>&1)
+                if [ -n "$lint_log" ]; then printf '%s\n' "$lint_log"; exit 1; fi
+                touch $out
+              '';
 
           # `nix fmt` formats the flake (and any future sources) via
           # treefmt, never the formatters standalone.

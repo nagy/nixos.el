@@ -4,7 +4,6 @@
 
 ;; Author: Daniel Nagy
 ;; Keywords: tools, unix
-;; Package-Requires: ((emacs "30.1") (nixos "0") (evil "0"))
 
 ;; This file is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU Affero General Public License as
@@ -106,7 +105,7 @@ beside the nixos ones."
     map))
 
 (defun evil-nixos--bind (keymap bindings)
-  "Bind BINDINGS into KEYMAP for the normal state.
+  "Bind keys of KEYMAP from BINDINGS for the normal state.
 BINDINGS is an alist of key string to command or keymap."
   (dolist (binding bindings)
     (evil-define-key* 'normal keymap (kbd (car binding)) (cdr binding))))

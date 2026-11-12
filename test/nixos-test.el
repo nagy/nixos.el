@@ -1,4 +1,4 @@
-;;; nixos-tests.el --- Tests for nixos -*- lexical-binding: t -*-
+;;; nixos-test.el --- Tests for nixos -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2026  Daniel Nagy
 
@@ -22,6 +22,8 @@
 ;;   (require 'ert)
 ;;
 ;; Then: M-x ert RET nixos
+
+;;; Code:
 
 (require 'nixos)
 (require 'ol-nixos)
@@ -51,14 +53,15 @@ converted to strings by stripping the leading colon."
 (defalias 'nixos-test--packages-hash #'nixos-test--options-hash)
 
 (defmacro nixos-test--with-options (options &rest body)
-  "Evaluate BODY with `nixos--options-cache' bound to OPTIONS."
+  "Bind OPTIONS to `nixos--options-cache' while BODY runs."
   (declare (indent 1))
   `(let ((nixos--options-cache ,options))
      ,@body))
 
 (defmacro nixos-test--with-packages (packages &rest body)
-  "Evaluate BODY with `nixos--packages-cache' and
-`nixos--packages-keys' bound from PACKAGES."
+  "Bind PACKAGES into the package caches while BODY runs.
+BODY sees `nixos--packages-cache' and `nixos--packages-keys'
+bound from PACKAGES."
   (declare (indent 1))
   `(let* ((nixos--packages-cache ,packages)
           (nixos--package-key-prefix "legacyPackages.x86_64-linux.")
@@ -1287,7 +1290,7 @@ so a posn reads the row."
                      "boot.a.enable")))))
 
 (ert-deftest nixos-browse-table-other-window-action ()
-  "The other-window command passes the display action once."
+  "The `other-window' command passes the display action once."
   (nixos-test--with-option-table
     (let ((seen-action 'none))
       (cl-letf (((symbol-function 'pop-to-buffer)
@@ -2398,5 +2401,5 @@ into the matching export while point sits in a table."
         (should (string-match-p "A demo flake" (buffer-string))))
       (kill-buffer displayed)))))
 
-(provide 'nixos-tests)
-;;; nixos-tests.el ends here
+(provide 'nixos-test)
+;;; nixos-test.el ends here

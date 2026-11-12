@@ -19,6 +19,7 @@
 ;; Author: Daniel Nagy
 ;; Version: 0.1.0
 ;; Keywords: tools, unix
+;; URL: https://github.com/nagy/nixos.el
 ;; Package-Requires: ((emacs "30.1") (nix-mode "0"))
 
 ;;; Commentary:
@@ -746,8 +747,8 @@ so a refresh that fetched the same data keeps the buffer text, its
 point, its folds and its overlays.")
 
 (defmacro nixos--unless-rendered (key &rest body)
-  "Evaluate BODY unless KEY matches the data of the last render.
-KEY names the kind and the data of the buffer.  Record KEY as the
+  "Compare KEY with the last render data and run BODY on a mismatch.
+KEY names the kind and the data of the buffer.  KEY becomes the
 data of the render when BODY runs."
   (declare (indent 1))
   `(unless (equal ,key nixos--browse-rendered)
@@ -1823,7 +1824,7 @@ A list of chars with the hyphen first (so it is literal in both
 `nixos--dotted-identifier-re' and `nixos--option-bounds'.")
 
 (defconst nixos--dotted-identifier-re
-  (let ((any-chars (append '(any) nixos--id-chars)))
+  (let ((any-chars (cons 'any nixos--id-chars)))
     (rx-to-string
      (list 'seq 'bos
            any-chars
@@ -2001,7 +2002,7 @@ A cell holds a string or a cons of a label and button properties."
         (t "")))
 
 (defun nixos--browse-table-longest-cell (entries column)
-  "Return the width of the widest COLUMN cell of ENTRIES.
+  "Return the width of the widest ENTRIES cell of COLUMN.
 ENTRIES has the shape of `tabulated-list-entries'."
   (declare (pure t) (side-effect-free t))
   (let ((longest 0))
@@ -2013,10 +2014,10 @@ ENTRIES has the shape of `tabulated-list-entries'."
                    (aref (cadr entry) column))))))))
 
 (defun nixos--package-canonical-widths (entries declared)
-  "Return DECLARED package widths with the Version column fitted.
+  "Fit the Version column of ENTRIES into DECLARED widths.
 ENTRIES decides how wide the Version column must be, up to
-`nixos-browse-table-version-max-width'.  The header width is the
-floor, so the label never truncates."
+`nixos-browse-table-version-max-width'.  DECLARED is the base,
+and the header width is the floor, so the label never truncates."
   (let ((widths (append declared nil)))
     (setcar (nthcdr 1 widths)
             (min nixos-browse-table-version-max-width
@@ -2343,7 +2344,7 @@ with a leading digit stays valid."
           "\n]\n"))
 
 (defun nixos--export-buffer (label text)
-  "Show TEXT in a read-only export buffer named for LABEL.
+  "Show the read-only export buffer that LABEL names with TEXT.
 A repeat export of the same format and table reuses the buffer."
   (let ((buffer (get-buffer-create
                  (format "*Nix %s export: %s*"
@@ -2388,10 +2389,9 @@ The text pastes into `environment.systemPackages'."
   "n" #'nixos-browse-export-nix)
 
 (defun nixos--browse-table-context-command (position buffer function)
-  "Return a command that moves point to POSITION and calls FUNCTION.
-The command runs in BUFFER.  A context menu click leaves point
-alone, and the menu command can run in another buffer, so the
-command restores both first."
+  "Return a command that moves point to POSITION in BUFFER and calls FUNCTION.
+A context menu click leaves point alone, and the menu command can
+run in another buffer, so the command restores both first."
   (lambda ()
     (interactive)
     (when (buffer-live-p buffer)

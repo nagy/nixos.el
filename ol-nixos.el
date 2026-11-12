@@ -41,9 +41,10 @@
 ;;; Shared export helper
 
 (defun nixos-org--export (url-template path description backend)
-  "Export an Org link for PATH to search.nixos.org.
-URL-TEMPLATE is a format string with one %s for the query,
-DESCRIPTION is the link text, BACKEND is the export backend."
+  "Export an Org link that uses URL-TEMPLATE for PATH.
+URL-TEMPLATE is a format string with one %s for the query, PATH
+is the link target, DESCRIPTION is the link text, BACKEND is the
+export backend."
   (declare (pure t) (side-effect-free t))
   (let ((url (format url-template (url-hexify-string path)))
         (desc (or description path)))

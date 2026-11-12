@@ -1,4 +1,4 @@
-;;; evil-nixos-tests.el --- Tests for evil-nixos  -*- lexical-binding: t -*-
+;;; evil-nixos-test.el --- Tests for evil-nixos  -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2026  Daniel Nagy
 
@@ -18,10 +18,12 @@
 
 ;; To run these tests:
 ;;
-;;   (require 'evil-nixos-tests)
+;;   (require 'evil-nixos-test)
 ;;   (require 'ert)
 ;;
 ;; Then: M-x ert RET evil-nixos
+
+;;; Code:
 
 (require 'evil)
 (require 'evil-nixos)
@@ -184,6 +186,6 @@
         (should (equal (nixos--browse-collapsed-sections) '("Declared by")))
         (kill-buffer)))))
 
-(provide 'evil-nixos-tests)
+(provide 'evil-nixos-test)
 
-;;; evil-nixos-tests.el ends here
+;;; evil-nixos-test.el ends here

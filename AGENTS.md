@@ -6,21 +6,23 @@ Emacs package providing interactive `completing-read` and
 `tabulated-list-mode` interfaces for browsing NixOS options, Nix
 packages and Nix flake outputs.  Three source files: `nixos.el`
 (core), `ol-nixos.el` (Org link types) and `evil-nixos.el` (Evil
-bindings).  Built via `flake.nix` (melpaBuild, AGPL3+).  Tests in
-`nixos-tests.el` and `evil-nixos-tests.el`.
+bindings).  Built via `flake.nix` (melpaBuild, AGPL3+).  Tests live
+in `test/`, one file per source unit that needs one:
+`test/nixos-test.el` and `test/evil-nixos-test.el`.
 
 ## Build & test
 
 ```sh
 nix build                                # build + run tests
-nix flake check                          # also builds the package
-emacs --batch -L . -l nixos-tests.el -f ert-run-tests-batch-and-exit
-emacs --batch -L . -l evil-nixos-tests.el -f ert-run-tests-batch-and-exit
+nix flake check                          # package + checks.lint
+nix build .#checks.x86_64-linux.lint     # checkdoc + package-lint
+emacs --batch -L . -L test -l test/nixos-test.el -f ert-run-tests-batch-and-exit
+emacs --batch -L . -L test -l test/evil-nixos-test.el -f ert-run-tests-batch-and-exit
 ```
 
-The Evil test file needs Evil, so `checkPhase` runs it with the
-`emacsWithEvil` wrapper of the flake.  The package itself never loads
-Evil, and `evil-nixos.el` byte-compiles without it.
+The Evil test file needs Evil, so `checkPhase` runs the whole suite
+with the `emacsWithEvil` wrapper of the flake.  The package itself
+never loads Evil, and `evil-nixos.el` byte-compiles without it.
 
 To skip the NixOS options JSON eval, pass an existing JSON file to the
 builder (see flake.nix; the old `nixosOptionsJson ? "/etc/..."`
@@ -102,7 +104,7 @@ binds the overview map on its own.
 `evil-nixos-goto-definition` reads `nixos--browse-position` and falls
 back to `evil-goto-definition`.
 
-`evil-nixos-tests.el` asserts the bindings of every auxiliary keymap
+`test/evil-nixos-test.el` asserts the bindings of every auxiliary keymap
 and the behaviour of `TAB`, `gr` and `gd`.  `execute-kbd-macro` does
 not reach an Evil state keymap in batch mode, so the tests take the
 command from `key-binding` and call it.
@@ -597,8 +599,9 @@ of every leaf node; `RET`/click opens a node's own detail buffer.
 
 ### Docstrings
 
-`emacs --batch -l checkdoc --eval '(checkdoc-file "nixos.el")'`
-reports no finding for the three source files.  Keep it that way.
+`emacs --batch -l checkdoc --eval '(checkdoc-arguments-in-order-flag t)' --eval '(mapc (lambda (f) (checkdoc-file f)) command-line-args-left)' *.el test/*.el`
+reports no finding for the source and the test files.  Keep it that
+way: `checks.lint` fails on any finding.
 
 - A function summary starts with an imperative verb.  A variable,
   face or group summary starts with a noun phrase.  A boolean
@@ -617,6 +620,25 @@ reports no finding for the three source files.  Keep it that way.
 
 ### Test conventions
 
+- Tests live in `test/` (singular), one file per source unit that
+  needs one, named `<unit>-test.el`: `test/nixos-test.el`,
+  `test/evil-nixos-test.el`.  Shared fixtures go in
+  `test/nixos-test-helper.el`, which never matches `*-test.el`, so the
+  glob loader stays a test-only list.  `ol-nixos.el` tests live in
+  `test/nixos-test.el`, because they load that module through the
+  core feature.
+- `checkPhase` loads the suite by glob, not by name:
+  `printf -- "-l %s " test/*-test.elc` under `failglob`.  A new test
+  file therefore needs no flake edit.  The guard on the substitution
+  is load-bearing: without it an empty glob passes with zero tests.
+- The package tarball never holds the test tree: the default
+  package-build `:files` spec does not descend into subdirectories,
+  and it also excludes root `*-test.el` and `*-tests.el`.  Do not add
+  a `files` attribute to `melpaBuild`.
+- `checks.lint` runs `package-lint` (with `package-lint-main-file`,
+  `package-lint--sane-prefixes`, and an offline `nix-mode` stub) and
+  `checkdoc` over `*.el test/*.el`.  Keep the test tree inside that
+  glob, so tests obey the same header and docstring rules.
 - The test file is byte-compiled in `checkPhase` with
   `byte-compile-error-on-warn = t`, so all warnings are fatal.
 - Forward-declare optional functions with
