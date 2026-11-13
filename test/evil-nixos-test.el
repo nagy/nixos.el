@@ -67,7 +67,7 @@
     (should (eq (lookup-key aux (kbd "gR")) #'nixos-browse-show-requisites))
     (should (eq (lookup-key aux (kbd "gd")) #'evil-nixos-goto-definition))
     (should (eq (lookup-key aux (kbd "w")) #'nixos-browse-copy-store-path))
-    (should (eq (lookup-key aux (kbd "TAB")) #'nixos-browse-toggle-section))
+    (should (eq (lookup-key aux (kbd "TAB")) #'magit-section-toggle))
     ;; The `q', `r' and `b' keys stay with Evil.
     (should-not (lookup-key aux (kbd "q")))
     (should-not (lookup-key aux (kbd "r")))
@@ -181,10 +181,37 @@
         (evil-local-mode 1)
         (goto-char (point-min))
         (search-forward "nixos/modules/foo.nix")
-        (should (eq (key-binding (kbd "TAB")) #'nixos-browse-toggle-section))
+        (should (eq (key-binding (kbd "TAB")) #'magit-section-toggle))
         (call-interactively (key-binding (kbd "TAB")))
-        (should (equal (nixos--browse-collapsed-sections) '("Declared by")))
+        (should (oref (magit-current-section) hidden))
         (kill-buffer)))))
+
+(ert-deftest evil-nixos-folds-reach-the-sections ()
+  "The Evil fold keys answer a detail buffer.
+`evil-fold-list' carries no entry for a Magit section buffer, so the
+layer adds one for `nixos-browse-mode'."
+  (let ((nixos--options-cache (evil-nixos-test--hash))
+        (nixos--nixpkgs-root nil))
+    (let ((data (evil-nixos-test--hash
+                 "description" "Enable foo"
+                 "declarations" ["nixos/modules/foo.nix"])))
+      (cl-letf (((symbol-function 'pop-to-buffer)
+                 (lambda (buf &optional _action) (set-buffer buf))))
+        (nixos--display-option "services.foo.enable" data)
+        (let ((section (progn (goto-char (point-min))
+                              (search-forward "Declared by")
+                              (magit-current-section))))
+          (should (memq 'nixos-browse-mode
+                        (apply #'append
+                               (mapcar #'car evil-fold-list))))
+          (evil-local-mode 1)
+          (goto-char (point-min))
+          (search-forward "nixos/modules/foo.nix")
+          (evil-close-fold)
+          (should (oref section hidden))
+          (evil-open-fold)
+          (should-not (oref section hidden))))
+      (kill-buffer))))
 
 (provide 'evil-nixos-test)
 

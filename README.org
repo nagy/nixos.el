@@ -24,6 +24,9 @@ interfaces for browsing NixOS options and Nix packages from Emacs.
   (opt-in module, enable with =(with-eval-after-load 'org (require 'ol-nixos))=)
 - Evil bindings for the detail buffers and the tables (opt-in module,
   enable with =(with-eval-after-load 'evil (require 'evil-nixos))=)
+- Detail buffers are =magit-section= trees: familiar fold and motion
+  keys, a per-kind section hook you can reorder, and one section per
+  flake output node
 - Completion annotations, eldoc, and bookmark support
 
 * Usage
@@ -41,6 +44,31 @@ attributes.
 The table shrinks its columns when the window is narrow, so the
 description stays visible.  Use ={= and =}= to resize a column by hand;
 a frame resize fits the columns again.
+
+* Detail buffers
+
+=M-x nixos-option=, =M-x nixos-package=, =M-x nixos-package-local=,
+=M-x nixos-package-url= and =M-x nixos-flake= open a detail buffer.  The
+buffer is a tree of =magit-section= sections, so it answers like a
+Magit buffer: =TAB= folds the section at point, =n= and =p= move
+between sections, =^= goes to the parent section, =1= to =4= show that
+many levels, and the section at point highlights.  Every field line is a
+section, and the input tree and the output list of a flake nest one
+section per node.
+
+Which sections appear is up to you.  Each buffer kind has its own hook,
+and the entries run in order:
+
+#+begin_src emacs-lisp
+  (setopt nixos-package-sections-hook
+          '(nixos-insert-package-title
+            nixos-insert-package-fields))
+#+end_src
+
+The hooks are =nixos-option-sections-hook=,
+=nixos-package-sections-hook=, =nixos-flake-sections-hook= and
+=nixos-flake-overview-sections-hook=.  A refresh keeps the folded
+sections and the line of point.
 
 * Evil
 

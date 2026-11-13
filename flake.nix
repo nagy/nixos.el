@@ -72,10 +72,12 @@
                   search path:${pkgs.path} --json "" | jq --sort-keys > $out
               '';
 
-          # Emacs with Evil, for the opt-in Evil layer.  The package itself
-          # needs no Evil: evil-nixos.el byte-compiles without it and
-          # loads it only when a user does.
-          emacsWithEvil = pkgs.emacs.pkgs.withPackages (epkgs: [
+          # Emacs with the load paths that this repository needs:
+          # `magit-section' for the detail buffers, and Evil plus
+          # nix-mode for the opt-in Evil layer and the tables.  The
+          # package declares `magit-section' and declares no Evil.
+          emacsWithDeps = pkgs.emacs.pkgs.withPackages (epkgs: [
+            epkgs.magit-section
             epkgs.evil
             epkgs.nix-mode
           ]);
@@ -96,7 +98,17 @@
 
             src = lib.cleanSource ./.;
 
-            packageRequires = [ pkgs.emacsPackages.nix-mode ];
+            packageRequires = [
+              pkgs.emacsPackages.magit-section
+              pkgs.emacsPackages.nix-mode
+            ];
+
+            # `melpaBuild' propagates `packageRequires' but does not put
+            # it on the load path of this build, and nixos.el requires
+            # `magit-section' to byte-compile.
+            preBuild = ''
+              export PATH="${emacsWithDeps}/bin:$PATH"
+            '';
 
             # Bake the store paths of the options/search JSON into the
             # defcustom defaults, so no runtime configuration is needed.
@@ -122,7 +134,7 @@
               # Every test runs under the Evil-capable Emacs, so one glob
               # covers the suite and a new test file needs no flake edit.
               # The package itself never loads Evil.
-              emacs=${emacsWithEvil}/bin/emacs
+              emacs=${emacsWithDeps}/bin/emacs
               $emacs --batch -L . -L test \
                 --eval '(setq byte-compile-error-on-warn t)' \
                 -f batch-byte-compile evil-nixos.el test/*-test.el
@@ -170,7 +182,12 @@
                 # package-lint reads ELPA headers, so it needs an Emacs that
                 # can see the package metadata.
                 nativeBuildInputs = [
-                  (pkgs.emacsPackages.emacsWithPackages (epkgs: [ epkgs.package-lint ]))
+                  # `magit-section' lets package-lint see that the
+                  # declared dependency is installable.
+                  (pkgs.emacsPackages.emacsWithPackages (epkgs: [
+                    epkgs.package-lint
+                    epkgs.magit-section
+                  ]))
                   # Gives Emacs a writable HOME, so the builder needs no
                   # `export HOME=$TMPDIR' line and no two checks share a
                   # home directory.
@@ -214,7 +231,7 @@
             #   emacs -l result/share/emacs/site-lisp/elpa/nixos-*/nixos-autoloads.el
             # Evil and nix-mode come with it, so the opt-in Evil layer
             # loads without extra setup.
-            packages = [ emacsWithEvil ];
+            packages = [ emacsWithDeps ];
           };
         };
     };

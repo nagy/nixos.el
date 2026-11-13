@@ -31,7 +31,7 @@ config, which hits the binary cache).
 
 ## Architecture
 
-### nixos.el (core, ~1350 lines)
+### nixos.el (core, ~2760 lines)
 
 1. Faces (`nixos-package-name`, `nixos-field-label`, `nixos-description`,
    `nixos-version`, `nixos-date`, `nixos-revision`)
@@ -44,14 +44,19 @@ config, which hits the binary cache).
    `nixos--flake-flatten`, `nixos--call-flake-show`,
    `nixos--call-flake-metadata`)
 5. Options / Packages / Flakes collection + annotation
-6. Browse Major Mode (`nixos-browse-mode`)
-7. Display helpers (`nixos--display-option`, `nixos--display-package`,
-   `nixos--display-flake`, `nixos--display-flake-overview`)
-8. Bookmarks (detail + table)
-9. Interactive commands (`nixos-package` / `nixos-package-local` /
-   `nixos-package-url`, `nixos-option`, `nixos-flake`)
-10. Thing-At-Point, Tabulated Browse Mode (shared macro), Eldoc
-11. Completion metadata, Package Browse Mode, Embark export + actions
+6. Browse Major Mode (`nixos-browse-mode`, derived from
+   `magit-section-mode`)
+7. Sections (the four `nixos-*-sections-hook` defcustoms, the inserters
+   `nixos-insert-*`, `nixos--render`, `nixos--browse-imenu-index`) and
+   Point keeping
+8. Display helpers (`nixos--field`, `nixos--link`, `nixos--display-option`,
+   `nixos--display-package`, `nixos--display-flake`,
+   `nixos--display-flake-overview`)
+9. Bookmarks (detail + table)
+10. Interactive commands (`nixos-package` / `nixos-package-local` /
+    `nixos-package-url`, `nixos-option`, `nixos-flake`)
+11. Thing-At-Point, Tabulated Browse Mode (shared macro), Eldoc
+12. Completion metadata, Package Browse Mode, Embark export + actions
 
 ### ol-nixos.el (Org link types, ~130 lines)
 
@@ -103,6 +108,14 @@ binds the overview map on its own.
 
 `evil-nixos-goto-definition` reads `nixos--browse-position` and falls
 back to `evil-goto-definition`.
+
+`TAB` in a detail buffer is `magit-section-toggle`, and the file adds
+the `nixos-browse-mode` entry that `evil-fold-list` lacks: the list
+holds an `outline-minor-mode` entry only, and `evil--mode-p` compares
+the major mode name itself.  The actions wrap `magit-section-toggle`,
+`magit-section-show`, `magit-section-hide` and
+`magit-section-show-children` in a lambda, because those commands take
+the section as an argument.
 
 `test/evil-nixos-test.el` asserts the bindings of every auxiliary keymap
 and the behaviour of `TAB`, `gr` and `gd`.  `execute-kbd-macro` does
@@ -302,10 +315,31 @@ the enum instead.
 
 ### Browse mode conventions
 
-`nixos-browse-mode` derives from `special-mode`: read-only buffers,
-`q`, and `g` → `revert-buffer` come for free.  Refresh goes through
+`nixos-browse-mode` derives from `magit-section-mode`, which derives
+from `special-mode`: read-only buffers, `q`, `g` → `revert-buffer`, and
+the whole `magit-section` key set come for free.  Refresh goes through
 `revert-buffer-function` (`nixos-browse-refresh`); no explicit
-`read-only-mode` calls or custom `g` bindings.
+`read-only-mode` calls and no `TAB` binding of our own.
+
+The mode body turns one `magit-section` default off.
+`magit-section-inhibit-markers` is t, because a marker per section end
+makes a render quadratic in the number of sections, and a flake
+overview holds one section per output.  A detail buffer inserts once
+and then only reads, so plain positions serve until the next render
+rebuilds them.  Because the positions stay plain, no heading may end
+with a colon: `magit-insert-child-count` rewrites such a heading
+*after* its children recorded their positions, and that shifts those
+positions.  A group heading therefore writes its item count into the
+heading text through `nixos--heading` before the children exist, so
+`magit-section-show-child-count` stays the reader's option and a
+count never moves a section.
+
+`list-buffers-directory` is nil: a renderer points `default-directory`
+at a store path or at the nixpkgs root, so the directory of the mode is
+not the directory of the buffer.
+
+`truncate-lines` stays t, the `magit-section-mode` default, so a long
+description clips at the window edge instead of folding the layout.
 
 The mode enables `goto-address-mode`, so a URL inside a description,
 an example value or a flake description becomes a link.  The link is
@@ -315,44 +349,127 @@ button for a URL that a description already holds.
 
 ### Detail buffer sections
 
-`nixos-browse-mode` folds detail sections through `outline-minor-mode`.
-A heading line carries the text property `nixos-section`, and
-`outline-search-function` is `nixos--outline-search`, which wraps
-`outline-search-text-property`.  No heading needs a special character.
-Every section is top level, so `outline-level` answers one.
+A detail buffer is a tree of `magit-section` sections.  Every display
+function sets `nixos--browse-data` and calls
 
-`nixos--insert-section` writes a heading with the `nixos-field-label`
-face.  `nixos--mark-section` tags a line that the caller already
-wrote.  Both store the name through `nixos--field-key`, which trims
-padding and the trailing colon, so a fold survives a render that
-changes the count of a heading such as `Outputs (12):`.
+```elisp
+(nixos--render 'option 'nixos-option-sections-hook)
+```
 
-`nixos--field` and `nixos--link` tag their label with `nixos-field`.
-`nixos--browse-imenu-index` lists the sections and the fields, and it
-is the `imenu-create-index-function` of the mode.
+`nixos--render` erases the buffer, opens one `nixos-detail` root
+section and runs the hook through `magit-run-section-hook`.  The root
+value is the kind of buffer (`option`, `package` or `flake`), so the
+sections of the four buffer kinds never share an ident.
 
-`TAB` runs `nixos-browse-toggle-section` from any line of a section,
-not only from its heading.  `nixos--browse-collapsed-sections` reads
-the folded names before a render, and
-`nixos--browse-restore-sections` folds them again afterwards.
-`nixos-browse-refresh` and `nixos--flake-overview-refresh` do that.
-Outline hiding edits a text property, so it runs under
-`inhibit-read-only`.
+Four defcustoms list the inserters, one per buffer kind:
+`nixos-option-sections-hook`, `nixos-package-sections-hook`,
+`nixos-flake-sections-hook` and
+`nixos-flake-overview-sections-hook`.  A user reorders or drops a
+section with `setopt` or `add-hook`, the way a Magit user edits
+`magit-status-sections-hook`.  Do not add a second knob that lists
+sections.
+
+An inserter is a top-level function that takes no arguments, reads the
+`nixos--browse-` locals and inserts through `magit-insert-section`.  It guards its own data, so a
+hook entry stays safe when the data lacks the field:
+
+```elisp
+(defun nixos-insert-package-maintainers ()
+  (let* ((meta (alist-get 'meta nixos--browse-data))
+         (maintainers (and meta (gethash "maintainers" meta))))
+    (when (and maintainers (not (eq maintainers :null)))
+      (magit-insert-section (nixos-group "Maintainers")
+        (nixos--insert-group-heading "Maintainers" (length maintainers))
+        ...))))
+```
+
+Section types and values:
+
+| Type | Value | Where |
+|---|---|---|
+| `nixos-detail` | the buffer kind | root, one per render |
+| `nixos-title` | the imenu label | title line of every buffer |
+| `nixos-field` | `nixos--field-key` of the label | one section per field line |
+| `nixos-group` | the label without colon | Declared by, Maintainers, Build Inputs, Native Build Inputs, Inputs, Outputs |
+| `nixos-input` | the full input path | one per lock node |
+| `nixos-output` | the node path | one per flake output |
+
+A value must stay stable across renders and unique among its siblings.
+The module path of an input and not its bare name, because a lock node
+can appear under two parents.  `nixos-insert-flake-outputs` shows the
+node count in the heading text and keeps it out of the value, so a
+fold survives a new output.
+
+`nixos--field` and `nixos--link` open one `nixos-field` section each,
+so a field carries its own identity and a render keeps point on it.
+`nixos--insert-title` opens `nixos-title` and adds the blank line after
+it.  `nixos--heading` paints a group heading with
+`magit-section-heading`; field labels keep `nixos-field-label`.
+A node heading paints with `nixos--node-heading', which names the
+`default` face, so a flake input node reads as plain content of the
+`Inputs` group and not as a bold section of its own.  A node still
+folds: it has a section and a heading.
+
+A heading carries no colon.  A field label carries one, the way
+`Head:` and `Merge:` do in a Magit status buffer, so the reader tells a
+field from a foldable group at a glance.  `nixos--insert-group-heading`
+inserts a group heading and writes the item count of the group into
+the heading string, before the children exist, and only when
+`magit-section-show-child-count` is non-nil.  The label carries
+`magit-section-heading` and the count carries
+`magit-section-child-count`, as the heading of a Magit buffer does, so
+`Outputs (5)` shows two faces and no colon.
+
+`nixos--browse-imenu-index` walks the section tree through
+`magit-map-sections` and lists the title, the fields and the groups in
+buffer order.  The nodes of a flake overview stay out, because a big
+flake holds one section per output and the menu would flood.
+
+Faces come from `propertize`, which is safe here: nothing in this
+package calls `font-lock-ensure`, so no unfontify step runs and a
+`face` property survives.  Pass an already propertized string to
+`magit-insert-heading`; when the string carries a face, Magit inserts
+it unchanged instead of painting `magit-section-heading`.
+
+`nixos--heading` sets both `face` and `font-lock-face` to
+`magit-section-heading` on the label and to
+`magit-section-child-count` on the count, the way
+`magit--propertize-face` paints a Magit heading.  `nixos--node-heading`
+does the same with the `default` face.  Set both properties: a caller
+that inspects a heading looks for `font-lock-face`, and a buffer
+without the font-lock alias still shows the explicit `face`.
 
 ### Point keeping across a refresh
 
-A refresh erases the buffer, so `nixos-browse-refresh` and
-`nixos--flake-overview-refresh` record the line of point before the
-render and restore it after the render.  A record names the text of
-the line, its ordinal among the equal lines above it, the number of
-lines from that line to the line of point, and the column.  It does
-not name a buffer position, because a render can change the length
-of a line above point.
+`nixos--render` erases the buffer, so it records the line of point
+before the erase and restores it after the render.  The record names a
+section and not a buffer position: the section at point, the number of
+lines from the start of that section, and the column.
 
-A blank line has no text of its own, so it leans on the nearest line
-above that carries text, and the record keeps the distance.  A
-column clips to the end of a shorter line.  When the buffer holds
-fewer equal lines than the ordinal, the last one serves.
+`nixos--restore-record` hands the record to
+`magit-section-goto-successor`, which finds the section again through
+`magit-section-ident` (type and value, plus the lineage) and moves down
+by the recorded number of lines and columns.  A section that the render
+dropped leaves point at `point-min`.
+
+The line offset counts from the section start, so a line added inside
+the same section moves the reader to the line that now sits on that
+offset, while a line added above the section moves nothing.  Give a
+line its own section when it needs its own identity; that is why every
+field line carries one.
+
+Folds need no code: `magit-section` keeps the visibility of a section
+in `magit-section-visibility-cache`, keyed by the section value, and
+`nixos--render` ends with
+
+```elisp
+(let ((magit-section-cache-visibility nil))
+  (magit-section-show magit-root-section))
+```
+
+The binding keeps the cache small: an entry appears only for a section
+that a reader folded or unfolded, so the hook that reads the cache
+stays cheap.
 
 ### Render skip
 
@@ -361,7 +478,7 @@ Each detail display function wraps its body in
 buffer and the data it renders.  The macro compares the key with
 `nixos--browse-rendered`, and it records the key when the body runs.
 A refresh that fetched the same data therefore erases nothing, so
-the point, the folds and the overlays stay.  The key holds the data
+the point, the folds, the overlays and the section objects stay.  The key holds the data
 itself, and `equal` compares hash tables and ignores the text
 properties of a string, so a fetch that returns the same JSON skips
 the render.
@@ -482,7 +599,9 @@ Two kinds of bookmarks are supported:
 
 **Detail bookmarks** — set from `nixos-browse-mode` buffers
 (single option/package).  Record fields: `type`, `name`, `source`
-(the `nixos--browse-source` value, serialized as-is).
+(the `nixos--browse-source` value, serialized as-is; a flake detail
+bookmark stores the flake reference instead, because
+`nixos--browse-source` stays nil for a flake).
 
 **Table bookmarks** — set from `nixos-browse-options-mode` /
 `nixos-browse-packages-mode` buffers (filtered lists).  Record
@@ -544,19 +663,19 @@ of every leaf node; `RET`/click opens a node's own detail buffer.
   user's `nixpkgs` overlays and needs no `--impure`.  `nixos-flake`
   calls it alongside `flake show`; the overview buffer renders
   flake-level fields via `nixos--flake-metadata-fields`:
-  Description, Path, URL, Revision, Last modified, Inputs (from
-  `locks.nodes`).  Sparse/empty values — and a nil META when the
-  command fails — are omitted gracefully.  `Inputs` is returned as a
-  list of tree display lines rendered as its own block under an
-  `Inputs:` header, matching the official `nix flake metadata` input
-  tree: `├───`/`└───` branch chars, sub-inputs indented, `NAME follows
-  input 'X'` lines for follow relationships, and each input shown as a
-  source label.  Sources are formatted from each node's locked/original
-  attrsets (`github:OWNER/REPO/REV` for github inputs, abbreviated
-  local paths for file inputs) with a `(YYYY-MM-DD HH:MM:SS)` date when
-  a lastModified timestamp exists; narHashes are omitted.  The source
-  formatting lives in `nixos--flake-input-source` and the tree walk in
-  `nixos--flake-input-tree`.
+  Description, Path, URL, Revision and Last modified.  Sparse/empty
+  values — and a nil META when the command fails — are omitted
+  gracefully.  The input tree comes from `nixos--flake-inputs`, which
+  walks `locks.nodes` through `nixos--flake-input-tree` and returns
+  data, not display text: a node is `(NAME SOURCE CHILD...)` and a
+  follow relationship is `(NAME follows TEXT)`.  `nixos-insert-flake-
+  inputs` opens one `nixos-input` section per node, indents by two
+  spaces per level and writes `NAME: SOURCE`, so a reader folds one
+  input subtree.  Sources are formatted from each node's
+  locked/original attrsets (`github:OWNER/REPO/REV` for github inputs,
+  abbreviated local paths for file inputs) with a `(YYYY-MM-DD
+  HH:MM:SS)` date when a lastModified timestamp exists; narHashes are
+  omitted.  The source formatting lives in `nixos--flake-input-source`.
 - **`~` expansion in flake refs** — Nix does not expand `~` in flake
   references, so "~/my-flake" is treated as a literal relative path
   and fails ("No such file or directory" pointing at
@@ -661,10 +780,34 @@ way: `checks.lint` fails on any finding.
   `lexical-binding: t` files on Emacs 31 doesn't reliably pick up
   `cl-letf` on `(symbol-function 'call-process)`.
 - Tests that need `nix-mode` use `(skip-unless (fboundp 'nix-mode))`.
+- A section test reads the tree, not the text: `magit-current-section`,
+  `(oref section type)`, `(oref section value)` and
+  `(oref section hidden)`.  The helpers are
+  `nixos-test--section` (a section by type and value),
+  `nixos-test--root-values` (the values under the root, in order) and
+  `nixos-test--render-groups` (a small tree in a temp buffer).
+- A fold hides its body, so point moves to the heading and
+  `search-forward` skips invisible text.  Assert a fold through
+  `(oref section hidden)` and `invisible-p`, and reach a section
+  through its visible heading.
+- A point-keeping test asserts the section semantics: a line added
+  above a section moves nothing, a line added inside it moves the
+  reader to the line that now sits on the recorded offset.
 - When testing `nixos--package-meta` memoization without loading
   `nix-mode`, use `(setq nix-instantiate-executable "nix-instantiate")`
   — `defvar` alone leaves it void, and `let` creates a lexical binding
   in `lexical-binding: t` files, invisible to `boundp`.
+- A `call-process` mock runs for a destination of `(list t STDERR-FILE)`,
+  because the package captures stderr through a temp file.  Test for
+  `(eq (car-safe destination) t)` and not for `(eq destination t)`.
+- Read an alist that holds string keys with `assoc` or
+  `(alist-get KEY ALIST nil nil #'equal)`.  A plain `alist-get` compares
+  with `eq`, so a string key never matches.
+- The suite defines one test per `ert-deftest` form.  After an edit,
+  compare `(length (ert-select-tests t t))` with the number of
+  `ert-deftest` forms: a missing parenthesis nests the later tests and
+  `ert` runs fewer of them without an error.  `check-parens` in
+  `emacs-lisp-mode` catches the case.
 
 ### `let*` for sequential bindings
 
@@ -706,22 +849,27 @@ command exits non-zero.  Use a temp file for stderr instead:
 
 ### Package display layout
 
-`nixos--display-package` uses local `cl-labels` closures (`field`,
-`link`) to right-pad all field labels to 14 characters.
+`nixos--field` and `nixos--link` open one `nixos-field` section per
+line and right-pad every label to `nixos--field-label-width` (14
+columns).  A caller that needs a wider column passes the width, as
+`nixos-insert-flake-metadata` does for `Last modified:`.
 
-Store paths are face-colored by on-disk status:
-`dired-directory` (exists, is a dir), default (exists, is a file),
-`error` (missing / GC'd).  Homepage URLs use the `link` face.
+Store paths are face-colored by on-disk status through
+`nixos--store-path-face`: `dired-directory` (exists, is a dir),
+default (exists, is a file), `error` (missing / GC'd).  Homepage URLs
+use the `link` face.
 
-Build and native build inputs are shown below maintainers with
-clickable package names and store paths aligned to a global
-column.  Package names are `insert-text-button` widgets navigating
-to `nixos-package`.
+Build and native build inputs are two sections, each inserted by its
+own function, with clickable package names and store paths aligned to
+one column.  `nixos--build-input-width` reads both lists, so the two
+sections line up even though they are separate hook entries.  Package
+names are `insert-text-button` widgets navigating to `nixos-package`.
 
-A `Position:` field shows the package's `meta.position` when
-present, as a clickable `insert-text-button` calling
-`find-file-at-point`.  The value is also stored in the
-buffer-local `nixos--browse-position` var.
+A `Position:` field shows the package's `meta.position` when present,
+as a clickable `insert-text-button` calling `find-file-at-point`.  The
+value goes on a line of its own, inside the `nixos-field` section of
+the field.  The value is also stored in the buffer-local
+`nixos--browse-position` var.
 
 ### Functional purity
 
@@ -749,6 +897,7 @@ promises that the same arguments always give the same value.
 | Dependency | Required? | Why |
 |-----------|-----------|-----|
 | Emacs 30.1 | yes | `json-parse-buffer`, `defvar-keymap`, `with-memoization` |
+| magit-section | yes | the detail buffers are `magit-section` trees: folds, section motions, the current-section highlight and the section lists of four hooks |
 | nix-mode | install: hard (Package-Requires); runtime: soft (guarded) | `nix-instantiate-executable` for package metadata; the value-less `defvar` makes the nix paths inert until nix-mode (or the user) sets the executable |
 | nix (CLI) | soft (guarded) | `nix-executable` (from nix-mode) for `nix flake show --json`; `nixos--call-flake-show` guards on `boundp` + `stringp` |
 | org-mode | soft | `ol-nixos.el` Org link types (opt-in `(require 'ol-nixos)`) |
@@ -759,16 +908,30 @@ promises that the same arguments always give the same value.
 
 Three custom faces (`nixos-package-name`, `nixos-field-label`,
 `nixos-description`) inherit from `package.el` faces when
-available, with built-in fallbacks (`bold`, `default`).  `nixos-version`
+available, with built-in fallbacks (`bold`, `default`).  Group and node
+headings paint with `magit-section-heading`, the face of every Magit
+heading, so a group reads like a section of a Magit buffer.  Field
+labels keep `nixos-field-label`, because a field line shows a value and
+is not a folded block.
+
+Faces come from `propertize` and not from font-lock keywords: nothing
+in this package calls `font-lock-ensure`, so no unfontify step removes
+a `face` property.  A propertized string passed to
+`magit-insert-heading` keeps its face, because Magit inserts a heading
+that already carries one unchanged.  `nixos-version`
 and `nixos-revision` inherit from `shadow`, a plain built-in.
-`nixos-date` inherits `(org-date shadow)`, so a date looks the same as
-in an Org buffer and stays muted when Org does not define its face.
+`nixos-date` inherits `(org-date shadow)`, so a timestamp in the
+flake input tree looks the same as in an Org buffer and stays muted
+when Org does not define its face.
 `nixos-revision` inherits `shadow` too with a background-adapting
 foreground (light/dark) for the `Revision:` flake hash, in the spirit
 of `magit-hash`.  No `(require 'package)` or `(require 'org)` needed —
-the `:inherit` list resolves left-to-right, skipping undefined faces.  `nixos-date` is applied to
-all rendered timestamps (the `Last modified:` flake field and the
-per-input dates in the flake input tree); `nixos-revision` to the
-`Revision:` value.  The flake overview `Description:` field uses
-`nixos-description` and its `Path:` field reuses the same on-disk-status
-face scheme as the package `Store path:` (see `nixos--display-package`).
+the `:inherit` list resolves left-to-right, skipping undefined faces.
+`nixos-date` is applied to the per-input dates of the flake input
+tree; the `Last modified:` flake field takes `magit-log-date` directly,
+so a date reads like a date in a Magit log.  The flake overview
+`Description:` field uses `nixos-description`, and its `Path:` field
+takes `dired-directory`, because a flake source path always names a
+directory even when it is not on disk.  The package `Store path:`
+keeps the on-disk-status scheme of `nixos--store-path-face` (see
+`nixos--display-package`).

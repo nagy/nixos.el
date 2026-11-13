@@ -74,6 +74,16 @@ bound from PACKAGES."
      ,@body))
 
 
+(defmacro nixos-test--with-rendered-option (data &rest body)
+  "Render DATA as an option detail buffer and run BODY there."
+  (declare (indent 1))
+  `(with-temp-buffer
+     (nixos-browse-mode)
+     (nixos--browse-setup 'option "services.foo.enable")
+     (setq-local nixos--browse-data ,data)
+     (nixos--render 'option 'nixos-option-sections-hook)
+     ,@body))
+
 ;;; Unit tests
 
 (ert-deftest nixos-slurp-description-from-hash ()
@@ -248,8 +258,72 @@ bound from PACKAGES."
                (lambda (_program &optional _infile _destination _display &rest _args) 1)))
       (should-not (nixos--ensure-nixpkgs-root)))))
 
+(defun nixos-test--section (type &optional value)
+  "Return the section of TYPE with VALUE, or nil.
+A nil VALUE matches any value."
+  (let (found)
+    (magit-map-sections
+     (lambda (section)
+       (when (and (eq (oref section type) type)
+                  (or (null value) (equal (oref section value) value)))
+         (setq found section))))
+    found))
+
+(defun nixos-test--root-values ()
+  "Return the value of every child of the root section, in order."
+  (mapcar (lambda (section) (oref section value))
+          (oref magit-root-section children)))
+
+(ert-deftest nixos-browse-group-heading-uses-the-magit-heading-face ()
+  "A group heading carries the face of a Magit heading and no colon.
+The label carries that face in both `face' and `font-lock-face', as a
+Magit heading is painted, and the count carries the face of a Magit
+child count."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable"
+         :description "Enable foo"
+         :declarations ["nixos/modules/foo.nix"]))
+    (nixos-test--with-rendered-option
+        (gethash "services.foo.enable" nixos--options-cache)
+      (goto-char (point-min))
+      (should (search-forward "Declared by" nil t))
+      (should (eq (get-text-property (1- (point)) 'face)
+                  'magit-section-heading))
+      (should (eq (get-text-property (1- (point)) 'font-lock-face)
+                  'magit-section-heading))
+      (should (search-forward "(1)" nil t))
+      (let ((count-beg (match-beginning 0))
+            (end (match-end 0)))
+        (while (< count-beg end)
+          (should (eq (get-text-property count-beg 'face)
+                      'magit-section-child-count))
+          (should (eq (get-text-property count-beg 'font-lock-face)
+                      'magit-section-child-count))
+          (setq count-beg (1+ count-beg))))
+      (goto-char (point-min))
+      (should-not (search-forward "Declared by:" nil t)))))
+
+(ert-deftest nixos-browse-group-heading-count-follows-the-option ()
+  "A group heading shows its item count only when the option asks for it."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable"
+         :description "Enable foo"
+         :declarations ["nixos/modules/foo.nix" "nixos/modules/bar.nix"]))
+    (let ((data (gethash "services.foo.enable" nixos--options-cache)))
+      (let ((magit-section-show-child-count t))
+        (nixos-test--with-rendered-option data
+          (goto-char (point-min))
+          (should (search-forward "Declared by (2)" nil t))))
+      (let ((magit-section-show-child-count nil))
+        (nixos-test--with-rendered-option data
+          (goto-char (point-min))
+          (should (search-forward "Declared by" nil t))
+          (should-not (search-forward "(2)" nil t)))))))
+
 (ert-deftest nixos-browse-option-sections ()
-  "`nixos--display-option' marks its foldable sections and its fields."
+  "`nixos--display-option' nests the title, the fields and the group."
   (nixos-test--with-options
       (nixos-test--options-hash
        '("services.foo.enable"
@@ -262,16 +336,20 @@ bound from PACKAGES."
         (nixos--display-option
          "services.foo.enable"
          (gethash "services.foo.enable" nixos--options-cache))
-        (should (equal (mapcar (lambda (position)
-                                 (get-text-property position 'nixos-section))
-                               (nixos--browse-section-headings))
-                       '("services.foo.enable" "Declared by")))
+        (should (eq (oref (nixos-test--section 'nixos-detail) type)
+                    'nixos-detail))
+        (should (equal (nixos-test--root-values)
+                       '("services.foo.enable" "Type" "Default" "Description"
+                         "Example" "Declared by")))
+        (should (equal (oref (nixos-test--section 'nixos-group "Declared by")
+                             type)
+                       'nixos-group))
         (should (member "Description"
                         (mapcar #'car (nixos--browse-imenu-index))))
         (kill-buffer)))))
 
-(ert-deftest nixos-browse-toggle-section-keeps-fold-on-refresh ()
-  "A refresh folds the sections that were folded before it."
+(ert-deftest nixos-browse-fold-keeps-on-refresh ()
+  "A refresh keeps the sections that a reader folded."
   (nixos-test--with-options
       (nixos-test--options-hash
        '("services.foo.enable"
@@ -284,17 +362,20 @@ bound from PACKAGES."
         (nixos--display-option "services.foo.enable" data)
         (goto-char (point-min))
         (search-forward "Declared by")
-        (beginning-of-line)
-        (nixos-browse-toggle-section)
-        (should (equal (nixos--browse-collapsed-sections) '("Declared by")))
+        (magit-section-toggle (magit-current-section))
+        (should (oref (magit-current-section) hidden))
         (cl-letf (((symbol-function 'nixos-option)
                    (lambda (name) (nixos--display-option name data))))
           (nixos-browse-refresh))
-        (should (equal (nixos--browse-collapsed-sections) '("Declared by")))
+        (goto-char (point-min))
+        (search-forward "Declared by")
+        (should (oref (magit-current-section) hidden))
+        ;; The body follows the heading, which may carry a child count.
+        (should (invisible-p (oref (magit-current-section) content)))
         (kill-buffer)))))
 
-(ert-deftest nixos-browse-toggle-section-unfolds ()
-  "A second \[nixos-browse-toggle-section] shows the section again."
+(ert-deftest nixos-browse-fold-unfolds ()
+  "A second fold of a section shows its body again."
   (nixos-test--with-options
       (nixos-test--options-hash
        '("services.foo.enable"
@@ -308,14 +389,14 @@ bound from PACKAGES."
          (gethash "services.foo.enable" nixos--options-cache))
         (goto-char (point-min))
         (search-forward "nixos/modules/foo.nix")
-        (nixos-browse-toggle-section)
-        (should (equal (nixos--browse-collapsed-sections) '("Declared by")))
-        (nixos-browse-toggle-section)
-        (should-not (nixos--browse-collapsed-sections))
+        (magit-section-toggle (magit-current-section))
+        (should (oref (magit-current-section) hidden))
+        (magit-section-toggle (magit-current-section))
+        (should-not (oref (magit-current-section) hidden))
         (kill-buffer)))))
 
 (ert-deftest nixos-browse-package-sections ()
-  "The package detail buffer folds its input lists and maintainers."
+  "The package detail buffer nests its input lists and maintainers."
   (let ((meta (make-hash-table :test 'equal))
         (dep (make-hash-table :test 'equal))
         (browse-buf nil))
@@ -333,17 +414,18 @@ bound from PACKAGES."
                    (set-buffer buf))))
         (nixos--display-package "htop" info)
         (with-current-buffer browse-buf
-          (should (equal (mapcar (lambda (position)
-                                   (get-text-property position 'nixos-section))
-                                 (nixos--browse-section-headings))
-                         '("Name" "Maintainers"
-                           "Build Inputs" "Native Build Inputs"))))
+          (should (equal (nixos-test--root-values)
+                         '("Name" "Store path" "Version" "Maintainers"
+                           "Build Inputs" "Native Build Inputs")))
+          (should (equal (oref (nixos-test--section 'nixos-group "Build Inputs")
+                               type)
+                         'nixos-group)))
         (kill-buffer browse-buf)))))
 
 (ert-deftest nixos-display-option-skips-an-equal-render ()
   "A display that receives the data of the buffer keeps its text.
-A refresh folds the sections again, so a fold that survives a
-second display proves that the buffer was not erased."
+The sections of a skipped render survive as the same objects, so a
+new object proves that the buffer was erased and built again."
   (nixos-test--with-options
       (nixos-test--options-hash
        '("services.foo.enable"
@@ -356,15 +438,16 @@ second display proves that the buffer was not erased."
         (nixos--display-option "services.foo.enable" data)
         (goto-char (point-min))
         (search-forward "Declared by")
-        (beginning-of-line)
-        (nixos-browse-toggle-section)
-        (nixos--display-option "services.foo.enable" data)
-        (should (equal (nixos--browse-collapsed-sections) '("Declared by")))
-        ;; Data that differs renders again, so the fold goes away.
-        (let ((changed (copy-hash-table data)))
-          (puthash "description" "Enable foo, now with more text." changed)
-          (nixos--display-option "services.foo.enable" changed)
-          (should-not (nixos--browse-collapsed-sections)))
+        (let ((section (magit-current-section)))
+          (nixos--display-option "services.foo.enable" data)
+          (should (eq (magit-current-section) section))
+          ;; Data that differs renders again, which builds new sections.
+          (let ((changed (copy-hash-table data)))
+            (puthash "description" "Enable foo, now with more text." changed)
+            (nixos--display-option "services.foo.enable" changed)
+            (goto-char (point-min))
+            (search-forward "Declared by")
+            (should-not (eq (magit-current-section) section))))
         (kill-buffer)))))
 
 (ert-deftest nixos-browse-table-revert-keeps-tags ()
@@ -408,54 +491,71 @@ second display proves that the buffer was not erased."
           (should (search-forward "b.two" nil t))
           (kill-buffer))))))
 
-(ert-deftest nixos-point-record-names-a-line ()
-  "`nixos--point-record' names the text, the ordinal and the column."
-  (with-temp-buffer
-    (insert "alpha\nbeta\ngamma\nbeta\n")
-    (goto-char (point-min))
-    (search-forward "beta")
-    (let ((record (nixos--point-record)))
-      (should (equal (plist-get record :text) "beta"))
-      (should (zerop (plist-get record :ordinal)))
-      (should (zerop (plist-get record :offset)))
-      (should (= (plist-get record :column) 4))
-      ;; A line that grows above point moves the position of the line.
-      (goto-char (point-min))
-      (insert "a longer line at the top\n")
-      (goto-char (nixos--record-position record))
-      (should (equal (nixos--line-text) "beta"))
-      (should (= (current-column) 4)))))
+(defun nixos-test--render-groups (lines &optional prefix)
+  "Render a test tree with one group holding LINES and one empty group.
+A non-nil PREFIX adds a line above the first group."
+  (let ((inhibit-read-only t))
+    (erase-buffer)
+    (magit-insert-section (nixos-detail 'test)
+      (when prefix
+        (insert prefix "\n"))
+      (magit-insert-section (nixos-group "Alpha")
+        (magit-insert-heading "Alpha")
+        (dolist (line lines)
+          (insert line "\n")))
+      (magit-insert-section (nixos-group "Beta")
+        (magit-insert-heading "Beta")
+        (insert "three\n")))))
 
-(ert-deftest nixos-point-record-counts-equal-lines ()
-  "The ordinal picks the right one of two equal lines."
+(ert-deftest nixos-point-record-names-a-section ()
+  "`nixos--point-record' names the section, its line and the column."
   (with-temp-buffer
-    (insert "alpha\nbeta\ngamma\nbeta\n")
+    (nixos-browse-mode)
+    (nixos-test--render-groups '("one" "two"))
     (goto-char (point-min))
-    (forward-line 3)
-    (let ((record (nixos--point-record)))
-      (should (equal (plist-get record :text) "beta"))
-      (should (= (plist-get record :ordinal) 1))
-      (goto-char (point-min))
-      (insert "a longer line at the top\n")
-      (goto-char (nixos--record-position record))
-      (should (= (line-number-at-pos) 5)))))
+    (search-forward "two")
+    (goto-char (match-beginning 0))
+    (let* ((record (nixos--point-record))
+           (section (plist-get record :section)))
+      (should (eq (oref section type) 'nixos-group))
+      (should (equal (oref section value) "Alpha"))
+      (should (= (plist-get record :line) 2))
+      (should (= (plist-get record :column) 0)))))
 
-(ert-deftest nixos-point-record-leans-on-a-blank-line ()
-  "A blank line keeps its distance from the line above it."
+(ert-deftest nixos-point-record-restores-the-line-of-a-section ()
+  "A record lands on the line that its section now holds."
   (with-temp-buffer
-    (insert "alpha\n\nbeta\n")
+    (nixos-browse-mode)
+    (nixos-test--render-groups '("one" "two"))
     (goto-char (point-min))
-    (forward-line 1)
+    (search-forward "two")
+    (goto-char (match-beginning 0))
     (let ((record (nixos--point-record)))
-      (should (equal (plist-get record :text) "alpha"))
-      (should (= (plist-get record :offset) 1))
-      (goto-char (point-min))
-      (insert "a longer line at the top\n")
-      (goto-char (nixos--record-position record))
-      (should (= (line-number-at-pos) 3))
-      (should (equal (nixos--line-text) "")))))
+      ;; A line added above the section moves the section, and point
+      ;; follows the section.
+      (nixos-test--render-groups '("one" "two") "a line above")
+      (nixos--restore-record record)
+      (should (looking-at-p "two"))
+      ;; A line added inside the section moves the reader to the line
+      ;; that now sits on its offset.
+      (nixos-test--render-groups '("zero" "one" "two"))
+      (nixos--restore-record record)
+      (should (looking-at-p "one")))
+    ;; A section that the render dropped leaves point at the start.
+    (goto-char (point-min))
+    (search-forward "two")
+    (goto-char (match-beginning 0))
+    (let ((record (nixos--point-record)))
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (magit-insert-section (nixos-detail 'test)
+          (magit-insert-section (nixos-group "Gamma")
+            (magit-insert-heading "Gamma")
+            (insert "four\n"))))
+      (nixos--restore-record record)
+      (should (= (point) (point-min))))))
 
-(ert-deftest nixos-browse-refresh-keeps-point-by-line ()
+(ert-deftest nixos-browse-refresh-keeps-point-on-a-field ()
   "A refresh keeps point on its field when the data above it changed."
   (nixos-test--with-options
       (nixos-test--options-hash
@@ -476,7 +576,7 @@ second display proves that the buffer was not erased."
           (cl-letf (((symbol-function 'nixos-option)
                      (lambda (name) (nixos--display-option name changed))))
             (nixos-browse-refresh))
-          (should (string-prefix-p "Example:" (nixos--line-text)))
+          (should (equal (oref (magit-current-section) value) "Example"))
           (should (= (current-column) column)))
         (kill-buffer)))))
 
@@ -2252,7 +2352,7 @@ into the matching export while point sits in a table."
           (should (equal nixos--browse-name
                          "packages.x86_64-linux.hello"))
           (should (equal nixos--browse-flake-ref ".")))
-        (kill-buffer displayed))))
+        (kill-buffer displayed)))))
 
 (ert-deftest nixos-flake-call-missing-binary ()
   "`nixos--call-flake-show' returns nil when the `nix' binary is missing."
@@ -2266,7 +2366,7 @@ into the matching export while point sits in a table."
     (cl-letf (((symbol-function 'call-process)
                (lambda (_program &optional _infile destination _display &rest args)
                  (push (car (last args)) refs)
-                 (when (eq destination t)
+                 (when (eq (car-safe destination) t)
                    (insert "{\"packages\":{\"x86_64-linux\":{\"hello\":{\"type\":\"derivation\"}}}}"))
                  0)))
       (nixos--call-flake-show "~/my-flake")
@@ -2277,7 +2377,7 @@ into the matching export while point sits in a table."
   (let ((nix-executable "nix"))
     (cl-letf (((symbol-function 'call-process)
                (lambda (_program &optional _infile destination _display &rest _args)
-                 (when (eq destination t)
+                 (when (eq (car-safe destination) t)
                    (insert "{\"packages\":{\"x86_64-linux\":{\"hello\":{\"type\":\"derivation\"}}}}"))
                  0)))
       (let ((result (nixos--call-flake-show ".")))
@@ -2372,24 +2472,91 @@ into the matching export while point sits in a table."
     (puthash "lastModified" 1788640836 meta)
     (puthash "locks" locks meta)
     (let ((fields (nixos--flake-metadata-fields meta)))
-      (should (equal (alist-get "Description:" fields) "A demo flake"))
-      (should (equal (alist-get "Path:" fields) "/nix/store/abc-source"))
-      (should (equal (alist-get "Revision:" fields) "f00d"))
-      (let ((inputs (cdr (assoc "Inputs:" fields))))
-        (should (listp inputs))
-        (should (equal (car inputs) "├───crane: github:ipetkov/crane/abc"))
-        (should (equal (car (last inputs)) "└───nixpkgs: github:NixOS/nixpkgs/def"))))))
+      (should (equal (cdr (assoc "Description:" fields)) "A demo flake"))
+      (should (equal (cdr (assoc "Path:" fields)) "/nix/store/abc-source"))
+      (should (equal (cdr (assoc "Revision:" fields)) "f00d"))
+      ;; A flake source path takes the Dired face, and the date takes
+      ;; the face of a Magit log date.
+      (should (eq (get-text-property 0 'face (cdr (assoc "Path:" fields)))
+                  'dired-directory))
+      (should (eq (get-text-property
+                   0 'face (cdr (assoc "Last modified:" fields)))
+                  'magit-log-date))
+      ;; The input tree folds, so it carries no field of its own.
+      (should-not (assoc "Inputs:" fields)))))
+
+(ert-deftest nixos-flake-inputs-tree ()
+  "`nixos--flake-inputs' returns a tree of lock nodes.
+A node that follows another input keeps no children, and an input
+that names a node carries that node's source."
+  (let* ((meta (make-hash-table :test 'equal))
+         (locks (make-hash-table :test 'equal))
+         (nodes (make-hash-table :test 'equal))
+         (root (make-hash-table :test 'equal))
+         (root-inputs (make-hash-table :test 'equal))
+         (crane (make-hash-table :test 'equal))
+         (crane-locked (make-hash-table :test 'equal))
+         (nixpkgs (make-hash-table :test 'equal))
+         (nixpkgs-locked (make-hash-table :test 'equal))
+         (nixpkgs-inputs (make-hash-table :test 'equal)))
+    (puthash "type" "github" crane-locked)
+    (puthash "owner" "ipetkov" crane-locked)
+    (puthash "repo" "crane" crane-locked)
+    (puthash "rev" "abc" crane-locked)
+    (puthash "locked" crane-locked crane)
+    (puthash "type" "github" nixpkgs-locked)
+    (puthash "owner" "NixOS" nixpkgs-locked)
+    (puthash "repo" "nixpkgs" nixpkgs-locked)
+    (puthash "rev" "def" nixpkgs-locked)
+    (puthash "locked" nixpkgs-locked nixpkgs)
+    (puthash "inputs" nixpkgs-inputs nixpkgs)
+    (puthash "flake-utils" (vector "flake-utils") nixpkgs-inputs)
+    (puthash "crane" "crane" root-inputs)
+    (puthash "nixpkgs" "nixpkgs" root-inputs)
+    (puthash "inputs" root-inputs root)
+    (puthash "root" root nodes)
+    (puthash "crane" crane nodes)
+    (puthash "nixpkgs" nixpkgs nodes)
+    (puthash "root" "root" locks)
+    (puthash "nodes" nodes locks)
+    (puthash "locks" locks meta)
+    (let ((tree (nixos--flake-inputs meta)))
+      (should (equal (mapcar #'car tree) '("crane" "nixpkgs")))
+      (should (equal (car tree)
+                     '("crane" "github:ipetkov/crane/abc")))
+      (let ((nixpkgs-node (cadr tree)))
+        (should (equal (cadr nixpkgs-node) "github:NixOS/nixpkgs/def"))
+        (should (equal (cddr nixpkgs-node)
+                       '(("flake-utils" follows "flake-utils"))))))))
 
 (ert-deftest nixos-display-flake-overview ()
   "`nixos--display-flake-overview' lists outputs and flake metadata."
   (let* ((cache (make-hash-table :test 'equal))
          (node (make-hash-table :test 'equal))
          (meta (make-hash-table :test 'equal))
+         (locks (make-hash-table :test 'equal))
+         (nodes (make-hash-table :test 'equal))
+         (root (make-hash-table :test 'equal))
+         (inputs (make-hash-table :test 'equal))
+         (crane (make-hash-table :test 'equal))
+         (locked (make-hash-table :test 'equal))
          (displayed nil))
     (puthash "type" "derivation" node)
     (puthash "description" "A greeting program" node)
     (puthash "packages.x86_64-linux.hello" node cache)
     (puthash "description" "A demo flake" meta)
+    (puthash "type" "github" locked)
+    (puthash "owner" "ipetkov" locked)
+    (puthash "repo" "crane" locked)
+    (puthash "rev" "abc" locked)
+    (puthash "locked" locked crane)
+    (puthash "inputs" inputs root)
+    (puthash "crane" "crane" inputs)
+    (puthash "root" root nodes)
+    (puthash "crane" crane nodes)
+    (puthash "nodes" nodes locks)
+    (puthash "root" "root" locks)
+    (puthash "locks" locks meta)
     (cl-letf (((symbol-function 'pop-to-buffer)
                (lambda (buf &optional _action) (setq displayed buf) (set-buffer buf))))
       (nixos--display-flake-overview "/tmp/ref" cache meta)
@@ -2398,7 +2565,21 @@ into the matching export while point sits in a table."
         (should (string-match-p "packages.x86_64-linux.hello"
                                 (buffer-string)))
         (should (string-match-p "Flake:" (buffer-string)))
-        (should (string-match-p "A demo flake" (buffer-string))))
+        (should (string-match-p "A demo flake" (buffer-string)))
+        (let ((magit-section-show-child-count t))
+          (let ((inhibit-read-only t))
+            (nixos--render 'flake 'nixos-flake-overview-sections-hook)
+            (should (string-match-p "^Outputs (1)$" (buffer-string)))
+            (should-not (string-match-p "Outputs.*:" (buffer-string)))
+            (should (string-match-p "^Inputs (1)$" (buffer-string)))
+            ;; A group heading carries the major heading face, and a
+            ;; node heading the plain one, so a node is not bold.
+            (let ((group (nixos-test--section 'nixos-group "Inputs"))
+                  (node (nixos-test--section 'nixos-input "crane")))
+              (should (eq (get-text-property (oref group start) 'face)
+                          'magit-section-heading))
+              (should (eq (get-text-property (oref node start) 'face)
+                          'default)))))
       (kill-buffer displayed)))))
 
 (provide 'nixos-test)

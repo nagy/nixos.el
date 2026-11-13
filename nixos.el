@@ -20,7 +20,7 @@
 ;; Version: 0.1.0
 ;; Keywords: tools, unix
 ;; URL: https://github.com/nagy/nixos.el
-;; Package-Requires: ((emacs "30.1") (nix-mode "0"))
+;; Package-Requires: ((emacs "30.1") (magit-section "3.0.0") (nix-mode "0"))
 
 ;;; Commentary:
 
@@ -77,7 +77,7 @@
 
 (require 'json)
 (require 'goto-addr)
-(require 'outline)
+(require 'magit-section)
 (require 'tabulated-list)
 (require 'thingatpt)
 (require 'cl-lib)
@@ -172,6 +172,61 @@ how much the columns before it must give up."
 The column grows to the longest visible version, up to this width,
 so an unstable suffix stays readable."
   :type 'integer
+  :group 'nixos)
+
+(defcustom nixos-option-sections-hook
+  '(nixos-insert-option-title
+    nixos-insert-option-fields
+    nixos-insert-option-declarations)
+  "Functions that insert the sections of an option detail buffer.
+`nixos--display-option' runs the entries in order through
+`magit-run-section-hook'.  Drop an entry to drop a section, or
+reorder the entries to reorder the sections.
+
+An entry takes no arguments and inserts through
+`magit-insert-section'.  It reads the data of the buffer from
+`nixos--browse-data' and the other `nixos--browse-' locals.  See
+`nixos-insert-option-fields' for the shape of an entry."
+  :type '(repeat function)
+  :group 'nixos)
+
+(defcustom nixos-package-sections-hook
+  '(nixos-insert-package-title
+    nixos-insert-package-fields
+    nixos-insert-package-maintainers
+    nixos-insert-package-build-inputs
+    nixos-insert-package-native-build-inputs)
+  "Functions that insert the sections of a package detail buffer.
+`nixos--display-package' runs the entries in order through
+`magit-run-section-hook'.  Drop an entry to drop a section, or
+reorder the entries to reorder the sections.  An entry reads the
+`nixos--package-meta' alist from `nixos--browse-data'.
+
+An entry takes no arguments and inserts through
+`magit-insert-section'.  See `nixos-insert-package-fields' for the
+shape of an entry."
+  :type '(repeat function)
+  :group 'nixos)
+
+(defcustom nixos-flake-sections-hook
+  '(nixos-insert-flake-title
+    nixos-insert-flake-fields)
+  "Functions that insert the sections of a flake node buffer.
+`nixos--display-flake' runs the entries in order through
+`magit-run-section-hook'.  An entry reads the leaf hash table of
+`nix flake show --json' from `nixos--browse-data'."
+  :type '(repeat function)
+  :group 'nixos)
+
+(defcustom nixos-flake-overview-sections-hook
+  '(nixos-insert-flake-metadata
+    nixos-insert-flake-inputs
+    nixos-insert-flake-outputs)
+  "Functions that insert the sections of a flake overview buffer.
+`nixos--display-flake-overview' runs the entries in order through
+`magit-run-section-hook'.  An entry reads a plist of `:ref',
+`:cache', `:meta' and `:inputs' from `nixos--browse-data'."
+  :type '(repeat function)
   :group 'nixos)
 
 
@@ -466,28 +521,39 @@ ACTION."
 ;;; Browse Major Mode
 
 (defvar-keymap nixos-browse-mode-map
-  :doc "Keymap for `nixos-browse-mode'."
-  :parent special-mode-map
-  "TAB" #'nixos-browse-toggle-section
+  :doc "Keymap for `nixos-browse-mode'.
+The fold keys, the section motions and the visibility levels come
+from `magit-section-mode-map'."
+  :parent magit-section-mode-map
   "b" #'nixos-browse-search-url
   "r" #'nixos-browse-show-requisites
   "w" #'nixos-browse-copy-store-path)
 
-(define-derived-mode nixos-browse-mode special-mode "NixOS-Browse"
+(define-derived-mode nixos-browse-mode magit-section-mode "NixOS-Browse"
   "Major mode for browsing NixOS option / package details.
 
-\\{nixos-browse-mode-map}"
+\\{nixos-browse-mode-map}
+The buffer is a tree of sections, so it answers like a Magit buffer:
+\\[magit-section-toggle] folds the section at point, `n' and `p' move
+between sections, `^' goes to the parent section and `1' to `4' show
+that many levels.  The section hooks decide which sections appear;
+see `nixos-option-sections-hook'."
   :interactive nil
   (setq-local bookmark-make-record-function #'nixos--bookmark-make-record)
   (setq-local revert-buffer-function #'nixos-browse-refresh)
-  ;; A heading line carries `nixos-section', so the outline search finds
-  ;; it and no heading needs a special character.  Every section is a top
-  ;; level section, so the level answers one.
-  (setq-local outline-search-function #'nixos--outline-search)
-  (setq-local outline-level (lambda () 1))
-  (setq-local outline-minor-mode-highlight nil)
-  (outline-minor-mode 1)
   (setq-local imenu-create-index-function #'nixos--browse-imenu-index)
+  ;; A renderer points `default-directory' at a store path or at the
+  ;; nixpkgs root, so the directory of the buffer is not the directory
+  ;; that the mode body sees.
+  (setq-local list-buffers-directory nil)
+  ;; A marker per section end makes a render quadratic in the number of
+  ;; sections, and a flake overview holds one section per output.  The
+  ;; buffer inserts once and then only reads, so plain positions serve
+  ;; until the next render rebuilds them.  A heading therefore writes
+  ;; its count into its own text, before the children exist, and never
+  ;; ends with a colon: `magit-insert-child-count' rewrites such a
+  ;; heading after its children have recorded their positions.
+  (setq-local magit-section-inhibit-markers t)
   ;; A description, an example and a flake description can hold a URL.
   ;; `goto-address-mode' marks it with an overlay, so the text of the
   ;; buffer stays plain and the URL opens with its own keys.
@@ -520,6 +586,13 @@ Used by `nixos-browse-refresh' and bookmarks to re-run
 The value is a string of the form \"/nix/store/.../package.nix:LINE\",
 or nil when the package has no such field.")
 
+(defvar-local nixos--browse-data nil
+  "The data that the section inserters of the current buffer read.
+An option buffer holds the option hash table, a package buffer the
+`nixos--package-meta' alist, a flake node buffer the leaf hash table
+of `nix flake show --json', and a flake overview buffer a plist of
+`:ref', `:cache', `:meta' and `:inputs'.")
+
 (defun nixos--browse-setup (type name &optional out-path source position)
   "Configure the current buffer for browsing TYPE (option or package) NAME.
 OUT-PATH is the package store path, if any.  SOURCE is the
@@ -534,209 +607,428 @@ POSITION is the package's `meta.position' string, if any."
 
 ;;; Sections
 
+;; A detail buffer is a tree of `magit-section' sections, so it folds,
+;; highlights and moves like a Magit buffer.  Every section carries a
+;; value that a later render finds again, and `magit-section' restores
+;; the folds of a reader through `magit-section-visibility-cache'.  The
+;; section hooks below decide which sections a buffer holds, so a user
+;; reorders or drops a section with `setopt' instead of editing the
+;; package.
+
 (defun nixos--field-key (label)
-  "Return the imenu key of field LABEL, without its padding and colon."
+  "Return LABEL without its padding and its trailing colon."
   (declare (pure t) (side-effect-free t))
   (string-trim-right label "[ \t:]+"))
 
-;; A detail buffer folds its sections through `outline-minor-mode'.  A
-;; heading line carries the text property `nixos-section' with the name
-;; of the section, and `outline-search-function' finds it, so no heading
-;; needs a special character in the text.  Every section is a top level
-;; section, so `outline-level' answers one for each of them.
+(defconst nixos--field-label-width 14
+  "Width of a field label, in columns.
+The labels line up with their values, so `Version:' and
+`Description:' keep their values in the same column.")
 
-(defun nixos--mark-section (start end title)
-  "Give the text between START and END the section property TITLE.
-TITLE loses its padding and its colon, so the section name of a
-heading line and the imenu key of a field line agree."
-  (add-text-properties start end (list 'nixos-section (nixos--field-key title))))
+(defun nixos--field-label (label &optional width)
+  "Return LABEL padded to WIDTH columns, plus a separating space.
+WIDTH defaults to `nixos--field-label-width', and a caller that
+needs more room, such as a flake overview that holds a
+`Last modified:' label, passes a wider value."
+  (format (format "%%-%ds" (or width nixos--field-label-width)) label))
 
-(defun nixos--insert-section (title &optional face)
-  "Insert TITLE as the heading line of a foldable section.
-The heading keeps FACE, defaulting to `nixos-field-label', and
-carries `nixos-section', so a render restores a fold by name."
-  (let ((start (point)))
-    (insert (propertize title 'face (or face 'nixos-field-label)) "\n")
-    (nixos--mark-section start (1- (point)) title)))
+(defun nixos--heading (text &optional count)
+  "Return TEXT as the heading of a group section.
+COUNT is the number of items of the group.  A positive COUNT goes
+into the heading when `magit-section-show-child-count' is non-nil,
+under the `magit-section-child-count' face, as a Magit heading
+paints its count.  A caller inserts the result before its children,
+so the number never shifts a position.
 
-(defun nixos--outline-search (&optional bound move backward looking-at)
-  "Search for the next text property `nixos-section'.
-BOUND, MOVE, BACKWARD and LOOKING-AT have the meaning that
-`outline-search-function' documents."
-  (outline-search-text-property 'nixos-section nil bound move backward
-                                looking-at))
+The face of TEXT is the one every Magit heading carries, so a group
+reads like a section of a Magit buffer.  Both `face' and
+`font-lock-face' name it, as a Magit heading is painted.  TEXT
+carries no colon, because a Magit heading carries none either: a
+field label ends with one and a heading does not."
+  (concat (propertize text 'face 'magit-section-heading
+                      'font-lock-face 'magit-section-heading)
+          (if (and count (> count 0) magit-section-show-child-count)
+              (propertize (format " (%d)" count)
+                          'face 'magit-section-child-count
+                          'font-lock-face 'magit-section-child-count)
+            "")))
 
-(defun nixos--browse-section-headings ()
-  "Return the start of every section heading of the current buffer.
-The positions come in buffer order."
-  (let (headings
-        (position (point-min)))
-    (save-excursion
-      (while (< position (point-max))
-        (when (get-text-property position 'nixos-section)
-          (push position headings))
-        (setq position (or (next-single-property-change
-                            position 'nixos-section nil (point-max))
-                           (point-max)))))
-    (nreverse headings)))
+(defun nixos--node-heading (text)
+  "Return TEXT as the heading of a node section.
+The face is `default', so a node reads as plain content of the group
+above it.  A node folds, but it is not a bold section heading."
+  (propertize text 'face 'default 'font-lock-face 'default))
 
-(defun nixos--browse-collapsed-sections ()
-  "Return the names of the folded sections of the current buffer.
-A refresh reads this before it erases the buffer, so it keeps the
-fold of a reader."
-  (when (bound-and-true-p outline-minor-mode)
-    (let (names)
-      (dolist (heading (nixos--browse-section-headings))
-        (save-excursion
-          (goto-char heading)
-          (when (outline-invisible-p (line-end-position))
-            (push (get-text-property heading 'nixos-section) names))))
-      names)))
+(defun nixos--insert-group-heading (label count)
+  "Insert the heading of a group section for LABEL.
+COUNT is the number of items in the group.  The heading carries the
+number when `magit-section-show-child-count' is non-nil, and the
+number goes in before the children exist, so no position shifts."
+  (magit-insert-heading (nixos--heading label count)))
 
-(defun nixos--browse-hide-section (name)
-  "Fold the section NAME of the current buffer when it is present."
-  (when-let* ((heading (seq-find
-                        (lambda (position)
-                          (equal (get-text-property position 'nixos-section)
-                                 name))
-                        (nixos--browse-section-headings))))
+(defun nixos--insert-title (label &rest parts)
+  "Insert the title section with imenu LABEL and heading PARTS.
+PARTS are strings that carry their own face.  A blank line follows
+the title, so the title reads as the header of the fields below it."
+  (magit-insert-section (nixos-title label)
+    (magit-insert-heading (apply #'concat parts)))
+  (insert "\n"))
+
+(defun nixos--render (type hook)
+  "Render the current browse buffer as a tree of TYPE sections.
+HOOK names the variable that lists the inserters, for example
+`nixos-option-sections-hook'.  Records the line of point before the
+erase and restores it afterwards, and keeps the folds of a reader,
+because `magit-section' keeps the visibility of a section by its
+value."
+  (let ((record (nixos--point-record)))
     (let ((inhibit-read-only t))
-      (save-excursion
-        (goto-char heading)
-        (outline-hide-subtree)))))
-
-(defun nixos--browse-restore-sections (names)
-  "Fold the sections of NAMES in the current buffer."
-  (dolist (name names)
-    (nixos--browse-hide-section name)))
-
-(defun nixos--browse-enclosing-section ()
-  "Return the start of the heading line of the section around point.
-Return nil when point sits above the first section."
-  (save-excursion
-    (beginning-of-line)
-    (if (get-text-property (point) 'nixos-section)
-        (point)
-      (when (outline-previous-heading)
-        (point)))))
-
-(defun nixos-browse-toggle-section ()
-  "Fold or unfold the section of the browse buffer around point.
-The command works on every line of a section, not only on the line
-that shows its heading, so a reader folds a long block from the
-middle of it."
-  (interactive)
-  (unless (derived-mode-p 'nixos-browse-mode)
-    (user-error "Not a nixos browse buffer"))
-  (when-let* ((heading (nixos--browse-enclosing-section)))
-    (let ((inhibit-read-only t))
-      (save-excursion
-        (goto-char heading)
-        (outline-toggle-children)))))
+      (erase-buffer)
+      (magit-insert-section (nixos-detail type)
+        (magit-run-section-hook hook))
+      (set-buffer-modified-p nil))
+    ;; Show the root section with the visibility cache off, so the cache
+    ;; holds an entry only for a section that a reader folded, and the
+    ;; hook that reads the cache stays cheap.
+    (let ((magit-section-cache-visibility nil))
+      (magit-section-show magit-root-section))
+    (nixos--restore-record record)))
 
 (defun nixos--browse-imenu-index ()
-  "Return an imenu index of the sections and the field lines."
+  "Return an imenu index of the title, the fields and the groups.
+The nodes of a flake overview stay out of the index, because a big
+flake holds one section per output and the menu would flood."
   (let (index)
-    (save-excursion
-      (goto-char (point-min))
-      (while (not (eobp))
-        (if-let* ((section (get-text-property (point) 'nixos-section)))
-            (push (cons section (point)) index)
-          (when-let* ((field (get-text-property (point) 'nixos-field)))
-            (push (cons field (point)) index)))
-        (forward-line 1)))
-    (nreverse index)))
+    (magit-map-sections
+     (lambda (section)
+       (when (memq (oref section type) '(nixos-title nixos-field nixos-group))
+         (push (cons (oref section value) (oref section start)) index))))
+    (sort index (lambda (a b) (< (cdr a) (cdr b))))))
+
+
+;;; Option sections
+
+(defun nixos-insert-option-title ()
+  "Insert the title section of an option buffer."
+  (nixos--insert-title nixos--browse-name
+                       (propertize nixos--browse-name 'face 'nixos-package-name)))
+
+(defun nixos-insert-option-fields ()
+  "Insert the fields of an option buffer."
+  (let ((data nixos--browse-data))
+    (nixos--field "Type:" (gethash "type" data))
+    (nixos--field "Default:"
+                  (nixos--value-to-string (gethash "default" data)))
+    (let ((desc (gethash "description" data)))
+      (when (and desc (not (eq desc :null)))
+        (nixos--field "Description:" desc 'nixos-description)))
+    (nixos--field "Example:"
+                  (nixos--value-to-string (gethash "example" data)))))
+
+(defun nixos-insert-option-declarations ()
+  "Insert the Declared by section of an option buffer."
+  (let ((decls (gethash "declarations" nixos--browse-data)))
+    (when (and decls (not (eq decls :null)))
+      ;; The declaration list can run long, so it folds.
+      (let ((list (if (vectorp decls) (append decls nil) decls)))
+        (magit-insert-section (nixos-group "Declared by")
+          (nixos--insert-group-heading "Declared by" (length list))
+          (dolist (d list)
+            (insert "  " d "\n")))))))
+
+
+;;; Package sections
+
+(defun nixos-insert-package-title ()
+  "Insert the title section of a package buffer."
+  (nixos--insert-title "Name"
+                       (propertize (nixos--field-label "Name:")
+                                   'face 'nixos-field-label)
+                       (propertize nixos--browse-name 'face 'nixos-package-name)))
+
+(defun nixos--store-path-face (path)
+  "Return the face of PATH, by its status on disk."
+  (declare (side-effect-free t))
+  (cond ((file-directory-p path) 'dired-directory)
+        ((file-exists-p path) nil)
+        (t 'error)))
+
+(defun nixos--license-string (license)
+  "Return the display string of LICENSE from the metadata of a package."
+  (cond ((hash-table-p license) (gethash "fullName" license))
+        ((vectorp license)
+         (mapconcat (lambda (l) (or (gethash "fullName" l) "")) license ", "))
+        ((stringp license) license)
+        (t (nixos--value-to-string license))))
+
+(defun nixos-insert-package-fields ()
+  "Insert the fields of a package buffer."
+  (let* ((info nixos--browse-data)
+         (meta (alist-get 'meta info))
+         (out-path (alist-get 'outPath info))
+         (position (alist-get 'position info)))
+    (when out-path
+      (nixos--field "Store path:"
+                    (propertize out-path 'face (nixos--store-path-face out-path)))
+      (when (and (null nixos--browse-source) (file-directory-p out-path))
+        (setq default-directory (file-name-as-directory out-path))))
+    (when meta
+      (let ((desc (gethash "description" meta)))
+        (when (and desc (not (eq desc :null)))
+          (nixos--field "Description:" desc 'nixos-description)))
+      (nixos--field "Version:"
+                    (or (gethash "version" meta)
+                        (alist-get 'version info)
+                        "")
+                    'nixos-version)
+      (let ((homepage (gethash "homepage" meta)))
+        (when (and homepage (not (eq homepage :null)))
+          (nixos--link "Homepage:" homepage)))
+      (let ((repo (alist-get 'repository info)))
+        (when (and repo (stringp repo) (not (string-empty-p repo)))
+          (nixos--link "Repository:" repo)))
+      (when (and position (stringp position) (not (string-empty-p position)))
+        ;; A position is long, so it takes a line of its own.
+        (magit-insert-section (nixos-field "Position")
+          (insert (propertize (nixos--field-label "Position:")
+                              'face 'nixos-field-label)
+                  "\n")
+          (insert-text-button position
+                              'action (lambda (_) (find-file-at-point position))
+                              'follow-link t
+                              'help-echo (format "Visit source: %s" position))
+          (insert "\n")))
+      (let ((license (gethash "license" meta)))
+        (when license
+          (nixos--field "License:" (nixos--license-string license)))))))
+
+(defun nixos-insert-package-maintainers ()
+  "Insert the Maintainers section of a package buffer."
+  (let* ((meta (alist-get 'meta nixos--browse-data))
+         (maintainers (and meta (gethash "maintainers" meta))))
+    (when (and maintainers (not (eq maintainers :null)))
+      ;; The maintainer list can run long, so it folds.
+      (let ((list (if (vectorp maintainers)
+                      (append maintainers nil)
+                    maintainers)))
+        (magit-insert-section (nixos-group "Maintainers")
+          (nixos--insert-group-heading "Maintainers" (length list))
+          (dolist (m list)
+            (when (hash-table-p m)
+              (insert "  " (or (gethash "name" m) "") "\n"))))))))
+
+(defun nixos--build-input-width (info)
+  "Return the width of the widest build input name of INFO.
+Both input lists share one width, so the store paths of the two
+sections line up."
+  (declare (side-effect-free t))
+  (let ((width 0))
+    (dolist (key '(buildInputs nativeBuildInputs))
+      (let ((deps (alist-get key info)))
+        (when (vectorp deps)
+          (dolist (dep (append deps nil))
+            (when-let* ((name (gethash "name" dep)))
+              (setq width (max width (string-width name))))))))
+    width))
+
+(defun nixos--insert-build-inputs (key label)
+  "Insert the input list KEY of a package buffer under LABEL."
+  (let ((deps (alist-get key nixos--browse-data)))
+    (when (and deps (vectorp deps) (> (length deps) 0))
+      (insert "\n")
+      ;; The input list can run long, so it folds.
+      (magit-insert-section (nixos-group label)
+        (nixos--insert-group-heading label (length deps))
+        (let ((width (nixos--build-input-width nixos--browse-data)))
+          (dolist (dep (append deps nil))
+            (let ((dep-name (gethash "name" dep))
+                  (dep-store (gethash "storePath" dep)))
+              (if dep-name
+                  (progn
+                    (insert-text-button dep-name
+                                        'action
+                                        (lambda (_) (nixos-package dep-name))
+                                        'follow-link t
+                                        'face 'link
+                                        'help-echo
+                                        (format "Browse package: %s" dep-name))
+                    (when dep-store
+                      (insert (make-string
+                               (+ (- width (string-width dep-name)) 2)
+                               ?\s))
+                      (insert (propertize dep-store
+                                          'face (nixos--store-path-face
+                                                 dep-store)))))
+                (insert "???")))
+            (insert "\n")))))))
+
+(defun nixos-insert-package-build-inputs ()
+  "Insert the Build Inputs section of a package buffer."
+  (nixos--insert-build-inputs 'buildInputs "Build Inputs"))
+
+(defun nixos-insert-package-native-build-inputs ()
+  "Insert the Native Build Inputs section of a package buffer."
+  (nixos--insert-build-inputs 'nativeBuildInputs "Native Build Inputs"))
+
+
+;;; Flake sections
+
+(defun nixos-insert-flake-title ()
+  "Insert the title section of a flake node buffer."
+  (nixos--insert-title nixos--browse-name
+                       (propertize nixos--browse-name 'face 'nixos-package-name)))
+
+(defun nixos-insert-flake-fields ()
+  "Insert the fields of a flake node buffer."
+  (let ((data nixos--browse-data)
+        (ref nixos--browse-flake-ref))
+    (when-let* ((type (gethash "type" data)))
+      (nixos--field "Type:" type))
+    (nixos--field "Path:" nixos--browse-name)
+    (let ((node-name (gethash "name" data)))
+      (when (and node-name (not (eq node-name :null)))
+        (nixos--field "Name:" node-name)))
+    (let ((desc (gethash "description" data)))
+      (when (and desc (not (eq desc :null)) (not (string-empty-p desc)))
+        (nixos--field "Description:" desc 'nixos-description)))
+    (when ref
+      (nixos--field "Flake:" (nixos--abbreviate-path ref)))))
+
+
+;;; Flake overview sections
+
+(defun nixos--flake-label-width (fields)
+  "Return the label width of a flake overview buffer.
+FIELDS is the metadata alist.  The width holds the longest label
+plus one space, so every value starts on the same column."
+  (1+ (apply #'max
+             (mapcar #'string-width
+                     (cons "Flake:" (mapcar #'car fields))))))
+
+(defun nixos-insert-flake-metadata ()
+  "Insert the Flake title and the metadata fields of an overview buffer."
+  (let* ((data nixos--browse-data)
+         (fields (nixos--flake-metadata-fields (plist-get data :meta)))
+         (width (nixos--flake-label-width fields)))
+    (nixos--insert-title "Flake"
+                         (propertize (nixos--field-label "Flake:" width)
+                                     'face 'nixos-field-label)
+                         (propertize (nixos--abbreviate-path (plist-get data :ref))
+                                     'face 'nixos-package-name))
+    (dolist (field fields)
+      (nixos--field (car field) (cdr field) nil width))))
+
+(defun nixos-insert-flake-inputs ()
+  "Insert the Inputs section of a flake overview buffer."
+  (when-let* ((nodes (plist-get nixos--browse-data :inputs)))
+    (insert "\n")
+    ;; The input tree can run long, so it folds.
+    (magit-insert-section (nixos-group "Inputs")
+      (nixos--insert-group-heading "Inputs" (length nodes))
+      (nixos-insert-flake-input-nodes nodes "" 0))))
+
+(defun nixos-insert-flake-input-nodes (nodes path depth)
+  "Insert the flake input NODES under section PATH at DEPTH.
+Each node is (NAME SOURCE CHILDREN...), and a node that follows
+another input is (NAME follows TEXT).  The value of a section is the
+full path of its node, so a fold survives a render."
+  (dolist (node nodes)
+    (let* ((name (car node))
+           (source (cadr node))
+           (identity (if (string-empty-p path) name (concat path "/" name))))
+      (magit-insert-section (nixos-input identity)
+        (magit-insert-heading
+         (nixos--node-heading
+          (concat (make-string (* 2 depth) ?\s)
+                  (if (eq source 'follows)
+                      (format "%s follows input '%s'" name (nth 2 node))
+                    (if source (concat name ": " source) name)))))
+        (unless (eq source 'follows)
+          (nixos-insert-flake-input-nodes (cddr node) identity (1+ depth)))))))
+
+(defun nixos-insert-flake-outputs ()
+  "Insert the Outputs section of a flake overview buffer."
+  (let* ((data nixos--browse-data)
+         (cache (plist-get data :cache))
+         (ref (plist-get data :ref))
+         (names (sort (hash-table-keys cache) #'string<))
+         (max-path (if names
+                       (apply #'max (mapcar #'string-width names))
+                     0))
+         (max-type (apply #'max
+                          0
+                          (mapcar (lambda (name)
+                                    (let ((type (gethash "type"
+                                                         (gethash name cache))))
+                                      (if type (string-width type) 0)))
+                                  names))))
+    (insert "\n")
+    ;; The count changes with the flake, so the heading shows it and
+    ;; the section keeps a plain value, so a fold survives a new output.
+    (magit-insert-section (nixos-group "Outputs")
+      (nixos--insert-group-heading "Outputs" (length names))
+      (dolist (name names)
+        (magit-insert-section (nixos-output name)
+          (let* ((node (gethash name cache))
+                 (type (gethash "type" node))
+                 (desc (nixos--trim-description (nixos--slurp-description node))))
+            (insert-text-button name
+                                'action
+                                (lambda (_)
+                                  (nixos--display-flake name node ref))
+                                'follow-link t
+                                'face 'link
+                                'help-echo (format "View output: %s" name)
+                                'button-data name)
+            (insert (make-string (+ 1 (- max-path (string-width name))) ?\s))
+            (when type
+              (insert (propertize type 'face 'nixos-field-label))
+              (when desc
+                (insert (make-string (+ 1 (- max-type (string-width type)))
+                                     ?\s))))
+            (when desc
+              (insert (propertize desc 'face 'nixos-description)))
+            (insert "\n")))))))
 
 
 ;;; Point keeping
 
-;; A refresh erases the buffer, so it records the line of point before
-;; the render and restores the line after it.  The record names the text
-;; of the line and not its buffer position, because a render can change
-;; the length of a line above it: the number of a build inputs heading
-;; or the text of a description.
-
-(defun nixos--line-text ()
-  "Return the text of the current line without properties or padding."
-  (string-trim-right
-   (buffer-substring-no-properties (line-beginning-position)
-                                   (line-end-position))))
-
-(defun nixos--line-occurrence (text)
-  "Return the number of lines above point that hold TEXT.
-The count is the ordinal of the line of point among the equal
-lines of the buffer, so a refresh keeps the right one of two equal
-lines."
-  (let ((origin (line-beginning-position)))
-    (save-excursion
-      (goto-char (point-min))
-      (let ((count 0))
-        (while (< (point) origin)
-          (when (equal (nixos--line-text) text)
-            (setq count (1+ count)))
-          (forward-line 1))
-        count))))
+;; A render erases the buffer, so `nixos--render' records the line of
+;; point before the render and restores it after the render.  The record
+;; names a section and not a buffer position: the section of the line,
+;; the distance from its start and the column.  `magit-section' finds
+;; the section again through its value, so a render that changes the
+;; text above point still lands on the same line.
 
 (defun nixos--point-record (&optional position)
   "Return a record of the line at POSITION, or nil.
-POSITION defaults to point.  The record holds the text of the line,
-its ordinal among the equal lines above it, the number of lines
-from the line that carries the text to the line of POSITION, and
-the column of POSITION.  A line of whitespace alone leans on the
-nearest line above it, so the record keeps its distance from that
-line.  Return nil when no line of the buffer carries text."
-  (let ((offset 0)
-        column
-        text)
-    (save-excursion
-      (goto-char (or position (point)))
-      (setq column (- (point) (line-beginning-position)))
-      (beginning-of-line)
-      (let ((done nil))
-        (while (not done)
-          (setq text (nixos--line-text))
-          (cond ((not (string-empty-p text)) (setq done t))
-                ((bobp) (setq done t))
-                (t
-                 (setq offset (1+ offset))
-                 (forward-line -1))))))
-    (unless (string-empty-p text)
-      (list :text text
-            :ordinal (nixos--line-occurrence text)
-            :offset offset
-            :column column))))
+POSITION defaults to point.  The record holds the section at
+POSITION, the number of lines from the start of that section and the
+column.  Return nil when the line sits in no section, because then
+the buffer holds no place to keep."
+  (let ((position (or position (point))))
+    (when-let* ((section (magit-section-at position)))
+      (list :section section
+            :line (- (line-number-at-pos position)
+                     (line-number-at-pos (oref section start)))
+            :column (- position
+                       (save-excursion
+                         (goto-char position)
+                         (line-beginning-position)))))))
 
-(defun nixos--record-position (record)
-  "Return the buffer position that RECORD names, or nil.
-The position is the start of the line that the text of RECORD
-names, moved down by the recorded number of lines and set to the
-recorded column.  A line with fewer columns clips the column to
-its end.  When the buffer holds fewer equal lines than the
-ordinal, the last one serves, so the reader stays in the same part
-of the buffer."
-  (when record
-    (let ((text (plist-get record :text))
-          (ordinal (plist-get record :ordinal))
-          (offset (plist-get record :offset))
-          (column (plist-get record :column))
-          (index 0)
-          found
-          last)
-      (save-excursion
-        (goto-char (point-min))
-        (while (re-search-forward (concat "^" (regexp-quote text) "[ \t]*$")
-                                  nil t)
-          (setq last (line-beginning-position))
-          (when (and (not found) (>= index ordinal))
-            (setq found last))
-          (setq index (1+ index)))
-        (when (or found last)
-          (goto-char (or found last))
-          (forward-line offset)
-          (unless (zerop column)
-            (goto-char (min (+ (line-beginning-position) column)
-                            (line-end-position))))
-          (point))))))
+(defun nixos--restore-record (record)
+  "Move point to the line that RECORD names.
+A nil RECORD, or a record of a section that the render dropped,
+leaves point at the start of the buffer."
+  (goto-char (or (when-let* ((section (plist-get record :section)))
+                   (save-excursion
+                     (when (magit-section-goto-successor
+                            section
+                            (plist-get record :line)
+                            (plist-get record :column))
+                       (point))))
+                 (point-min))))
+
 
 ;;; Render skip
 
@@ -810,55 +1102,52 @@ This shows requisites, references, derivers, etc."
 (defun nixos-browse-refresh (&rest _ignored)
   "Refresh the current browse buffer.
 Optional IGNORED args accommodate `revert-buffer-function' calling
-convention."
+convention.  A render keeps the folds and the line of point, so the
+refresh itself only fetches the data again."
   (interactive)
   (unless nixos--browse-name
     (user-error "Nothing to refresh"))
-  (let ((record (nixos--point-record))
-        (collapsed (nixos--browse-collapsed-sections)))
-    (cl-case nixos--browse-type
-      (option (nixos-option nixos--browse-name))
-      (package (pcase nixos--browse-source
-                 (`(url . ,url) (nixos-package-url url))
-                 (`(local . ,dir)
-                  (let ((default-directory dir))
-                    (nixos-package-local)))
-                 (_ (nixos-package nixos--browse-name))))
-      (flake (let ((data (and nixos--flake-cache
-                              (gethash nixos--browse-name nixos--flake-cache))))
-               (if data
-                   (nixos--display-flake
-                    nixos--browse-name data nixos--browse-flake-ref)
-                 (user-error "Flake node `%s' no longer cached"
-                             nixos--browse-name))))
-      (t (user-error "Unknown browse type %s" nixos--browse-type)))
-    (nixos--browse-restore-sections collapsed)
-    (goto-char (or (nixos--record-position record) (point-min)))))
+  (cl-case nixos--browse-type
+    (option (nixos-option nixos--browse-name))
+    (package (pcase nixos--browse-source
+               (`(url . ,url) (nixos-package-url url))
+               (`(local . ,dir)
+                (let ((default-directory dir))
+                  (nixos-package-local)))
+               (_ (nixos-package nixos--browse-name))))
+    (flake (let ((data (and nixos--flake-cache
+                            (gethash nixos--browse-name nixos--flake-cache))))
+             (if data
+                 (nixos--display-flake
+                  nixos--browse-name data nixos--browse-flake-ref)
+               (user-error "Flake node `%s' no longer cached"
+                           nixos--browse-name))))
+    (t (user-error "Unknown browse type %s" nixos--browse-type))))
 
-(defun nixos--field (label value &optional face)
-  "Insert a LABEL field with VALUE into the current buffer.
-LABEL is right-padded to 14 columns.  VALUE may be nil (inserted
-as an empty value) or a string; optional FACE is applied to it.
-The label carries `nixos-field' with `nixos--field-key', so the
-imenu index of the buffer lists it."
-  (insert (propertize (format "%-14s" label)
-                      'face 'nixos-field-label
-                      'nixos-field (nixos--field-key label)))
-  (when (and value (not (string-empty-p value)))
-    (insert (if face (propertize value 'face face) value)))
-  (insert "\n"))
+(defun nixos--field (label value &optional face width)
+  "Insert a field section LABEL with VALUE on one line.
+VALUE may be nil (an empty value) or a string, and optional FACE
+applies to it.  LABEL is padded to WIDTH columns, which defaults to
+`nixos--field-label-width'.  The section carries the trimmed label
+as its value, so a render keeps point on the field and
+`nixos--browse-imenu-index' lists it."
+  (magit-insert-section (nixos-field (nixos--field-key label))
+    (insert (propertize (nixos--field-label label width)
+                        'face 'nixos-field-label))
+    (when (and value (not (string-empty-p value)))
+      (insert (if face (propertize value 'face face) value)))
+    (insert "\n")))
 
 (defun nixos--link (label url)
-  "Insert a clickable LABEL field for URL into the current buffer."
-  (insert (propertize (format "%-14s" label)
-                      'face 'nixos-field-label
-                      'nixos-field (nixos--field-key label)))
-  (when url
-    (insert-text-button url
-                        'action (lambda (_) (browse-url url))
-                        'follow-link t
-                        'help-echo (format "Browse %s" url)))
-  (insert "\n"))
+  "Insert a clickable field section LABEL for URL."
+  (magit-insert-section (nixos-field (nixos--field-key label))
+    (insert (propertize (nixos--field-label label) 'face 'nixos-field-label))
+    (when url
+      (insert-text-button url
+                          'action (lambda (_) (browse-url url))
+                          'follow-link t
+                          'help-echo (format "Browse %s" url)))
+    (insert "\n")))
 
 (defun nixos--display-option (name data)
   "Create a formatted detail buffer for NixOS option NAME with DATA."
@@ -866,41 +1155,21 @@ imenu index of the buffer lists it."
         (key (list 'option name data)))
     (with-current-buffer buf
       (nixos--unless-rendered key
-        (let ((inhibit-read-only t))
-          (erase-buffer)
-          (nixos-browse-mode)
-          (nixos--browse-setup 'option name)
-          ;; Title
-          (nixos--insert-section name 'nixos-package-name)
-          (insert "\n")
-          ;; Fields
-          (nixos--field "Type:" (gethash "type" data))
-          (nixos--field "Default:"
-                        (nixos--value-to-string (gethash "default" data)))
-          (let ((desc (gethash "description" data)))
-            (when (and desc (not (eq desc :null)))
-              (nixos--field "Description:" desc 'nixos-description)))
-          (nixos--field "Example:"
-                        (nixos--value-to-string (gethash "example" data)))
-          (let ((decls (gethash "declarations" data)))
-            (when (and decls (not (eq decls :null)))
-              ;; The declaration list can run long, so it folds.
-              (nixos--insert-section "Declared by:")
-              (dolist (d (if (vectorp decls) (append decls nil) decls))
-                (insert "  " d "\n"))))
-          ;; Point default-directory at the nixpkgs root so
-          ;; embark-dwim / find-file-at-point can resolve relative
-          ;; declaration paths like "nixos/modules/programs/htop.nix".
-          (when-let* ((decls (gethash "declarations" data))
-                      ((vectorp decls))
-                      ((> (length decls) 0))
-                      (first (aref decls 0))
-                      (root (nixos--ensure-nixpkgs-root))
-                      (full (expand-file-name first root))
-                      ((file-exists-p full)))
-            (setq default-directory root))
-          (goto-char (point-min))
-          (set-buffer-modified-p nil))))
+        (nixos-browse-mode)
+        (nixos--browse-setup 'option name)
+        (setq-local nixos--browse-data data)
+        (nixos--render 'option 'nixos-option-sections-hook)
+        ;; Point default-directory at the nixpkgs root so
+        ;; embark-dwim / find-file-at-point can resolve relative
+        ;; declaration paths like "nixos/modules/programs/htop.nix".
+        (when-let* ((decls (gethash "declarations" data))
+                    ((vectorp decls))
+                    ((> (length decls) 0))
+                    (first (aref decls 0))
+                    (root (nixos--ensure-nixpkgs-root))
+                    (full (expand-file-name first root))
+                    ((file-exists-p full)))
+          (setq default-directory root))))
     (pop-to-buffer buf nixos-display-buffer-action)))
 
 (defun nixos--display-package (name info &optional source)
@@ -913,116 +1182,19 @@ and `repository' a URL string.
 
 SOURCE is the package origin as understood by
 `nixos--browse-source': nil for a nixpkgs package, (local . DIR)
-or (url . URL) otherwise.  When SOURCE is non-nil,
-`default-directory' is not pointed at the store path — the
-buffer is for a local project or a remote tarball, not an
+or (url . URL) otherwise.  When SOURCE is non-nil, the renderer
+does not point `default-directory' at the store path, because the
+buffer is for a local project or a remote tarball and not an
 installed Nix package."
-  (let ((meta-data (alist-get 'meta info))
-        (out-path (alist-get 'outPath info))
-        (buf (get-buffer-create (format "*nixos-package %s*" name)))
+  (let ((buf (get-buffer-create (format "*nixos-package %s*" name)))
         (key (list 'package name info source)))
     (with-current-buffer buf
       (nixos--unless-rendered key
-        (let ((inhibit-read-only t))
-          (erase-buffer)
-          (nixos-browse-mode)
-          (nixos--browse-setup 'package name out-path source (alist-get 'position info))
-          ;; Title
-          (let ((start (point)))
-            (insert (propertize (format "%-14s" "Name:") 'face 'nixos-field-label)
-                    (propertize name 'face 'nixos-package-name) "\n")
-            (nixos--mark-section start (1- (point)) "Name:"))
-          (when out-path
-            (nixos--field "Store path:"
-                          (propertize out-path
-                                      'face (cond ((file-directory-p out-path)
-                                                   'dired-directory)
-                                                  ((file-exists-p out-path) nil)
-                                                  (t 'error))))
-            (when (and (null source) (file-directory-p out-path))
-              (setq default-directory (file-name-as-directory out-path))))
-          ;; Meta fields (hash table from parsed JSON)
-          (when meta-data
-            (let ((desc (gethash "description" meta-data)))
-              (when (and desc (not (eq desc :null)))
-                (nixos--field "Description:" desc 'nixos-description)))
-            (nixos--field "Version:"
-                          (or (gethash "version" meta-data)
-                              (alist-get 'version info)
-                              "")
-                          'nixos-version)
-            (let ((hp (gethash "homepage" meta-data)))
-              (when (and hp (not (eq hp :null)))
-                (nixos--link "Homepage:" hp)))
-            (let ((repo (alist-get 'repository info)))
-              (when (and repo (stringp repo) (not (string-empty-p repo)))
-                (nixos--link "Repository:" repo)))
-            (let ((pos (alist-get 'position info)))
-              (when (and pos (stringp pos) (not (string-empty-p pos)))
-                (nixos--field "Position:" nil)
-                (insert-text-button pos
-                                    'action (lambda (_) (find-file-at-point pos))
-                                    'follow-link t
-                                    'help-echo (format "Visit source: %s" pos))
-                (insert "\n")))
-            (let ((lic (gethash "license" meta-data)))
-              (when lic
-                (nixos--field "License:"
-                              (cond ((hash-table-p lic) (gethash "fullName" lic))
-                                    ((vectorp lic)
-                                     (mapconcat (lambda (l)
-                                                  (or (gethash "fullName" l) ""))
-                                                lic ", "))
-                                    ((stringp lic) lic)
-                                    (t (nixos--value-to-string lic))))))
-            (let ((maint (gethash "maintainers" meta-data)))
-              (when (and maint (not (eq maint :null)))
-                ;; The maintainer list can run long, so it folds.
-                (nixos--insert-section "Maintainers:")
-                (dolist (m (if (vectorp maint) (append maint nil) maint))
-                  (when (hash-table-p m)
-                    (insert "  " (or (gethash "name" m) "") "\n"))))))
-          ;; Build dependencies
-          ;; Compute global max-name across all dep types for alignment.
-          (let ((global-max 0))
-            (dolist (dep-type '((buildInputs) (nativeBuildInputs)))
-              (let ((deps (alist-get (car dep-type) info)))
-                (when (and deps (vectorp deps) (> (length deps) 0))
-                  (dolist (dep (append deps nil))
-                    (let ((n (gethash "name" dep)))
-                      (when n
-                        (setq global-max (max global-max (string-width n)))))))))
-            ;; Display with global alignment.
-            (dolist (dep-type `((buildInputs . "Build Inputs:")
-                                (nativeBuildInputs . "Native Build Inputs:")))
-              (let ((deps (alist-get (car dep-type) info)))
-                (when (and deps (vectorp deps) (> (length deps) 0))
-                  (insert "\n")
-                  ;; The input list can run long, so it folds.
-                  (nixos--insert-section (cdr dep-type))
-                  (dolist (dep (append deps nil))
-                    (let ((dep-name (gethash "name" dep))
-                          (dep-store (gethash "storePath" dep)))
-                      (if dep-name
-                          (progn
-                            (insert-text-button dep-name
-                                                'action (lambda (_) (nixos-package dep-name))
-                                                'follow-link t
-                                                'face 'link
-                                                'help-echo (format "Browse package: %s" dep-name))
-                            (when dep-store
-                              (insert (make-string
-                                       (+ (- global-max (string-width dep-name)) 2)
-                                       ?\s))
-                              (insert (propertize dep-store
-                                                  'face (cond ((file-directory-p dep-store)
-                                                               'dired-directory)
-                                                              ((file-exists-p dep-store) nil)
-                                                              (t 'error))))))
-                        (insert "???")))
-                    (insert "\n"))))))
-          (goto-char (point-min))
-          (set-buffer-modified-p nil))))
+        (nixos-browse-mode)
+        (nixos--browse-setup 'package name (alist-get 'outPath info) source
+                             (alist-get 'position info))
+        (setq-local nixos--browse-data info)
+        (nixos--render 'package 'nixos-package-sections-hook)))
     (pop-to-buffer buf nixos-display-buffer-action)))
 
 
@@ -1041,29 +1213,11 @@ are unavailable here."
         (key (list 'flake name data ref)))
     (with-current-buffer buf
       (nixos--unless-rendered key
-        (let ((inhibit-read-only t))
-          (erase-buffer)
-          (nixos-browse-mode)
-          (nixos--browse-setup 'flake name)
-          (setq-local nixos--browse-flake-ref ref)
-          ;; Title
-          (nixos--insert-section name 'nixos-package-name)
-          (insert "\n")
-          ;; Fields
-          (let ((type (gethash "type" data)))
-            (when type
-              (nixos--field "Type:" type)))
-          (nixos--field "Path:" name)
-          (let ((node-name (gethash "name" data)))
-            (when (and node-name (not (eq node-name :null)))
-              (nixos--field "Name:" node-name)))
-          (let ((desc (gethash "description" data)))
-            (when (and desc (not (eq desc :null)) (not (string-empty-p desc)))
-              (nixos--field "Description:" desc 'nixos-description)))
-          (when ref
-            (nixos--field "Flake:" (nixos--abbreviate-path ref)))
-          (goto-char (point-min))
-          (set-buffer-modified-p nil))))
+        (nixos-browse-mode)
+        (nixos--browse-setup 'flake name)
+        (setq-local nixos--browse-flake-ref ref)
+        (setq-local nixos--browse-data data)
+        (nixos--render 'flake 'nixos-flake-sections-hook)))
     (pop-to-buffer buf nixos-display-buffer-action)))
 
 (defun nixos--flake-leaf-p (node)
@@ -1225,83 +1379,67 @@ official `nix flake metadata' input tree."
           src)))))
 
 (defun nixos--flake-input-tree (nodes root)
-  "Return the input tree display lines for NODES rooted at ROOT.
+  "Return the input tree of NODES rooted at ROOT.
 NODES is the \"locks.nodes\" hash table and ROOT the node id of the
-flake itself.  Walks each node's \"inputs\", rendering a nested tree
-matching the official `nix flake metadata' output: a non-last sibling
-uses \"├───\", the last uses \"└───\", children are indented under
-their parent with \"│   \"/\"    \".  An input whose value is a vector
-follows another input and renders as NAME follows input X; a
-string value names the child node to recurse into."
-  (let (lines)
-    (cl-labels ((walk (node-id prefix visited)
-                  (let* ((node (gethash node-id nodes))
-                         (inputs (and (hash-table-p node)
-                                      (gethash "inputs" node)))
-                         (names (and inputs
-                                     (sort (let (acc)
-                                             (maphash
-                                              (lambda (k _) (push k acc))
-                                              inputs)
-                                             acc)
-                                           #'string<))))
-                    (when names
-                      (let ((n (length names)))
-                        (dotimes (i n)
-                          (let* ((name (nth i names))
-                                 (lastp (= i (1- n)))
-                                 (branch (if lastp "└───" "├───"))
-                                 (val (gethash name inputs)))
-                            (if (vectorp val)
-                                (push (concat prefix branch name
-                                              " follows input '"
-                                              (aref val 0) "'")
-                                      lines)
-                              (let* ((child (gethash val nodes))
-                                     (child-prefix (concat prefix
-                                                           (if lastp
-                                                               "    "
-                                                             "│   "))))
-                                (push (concat prefix branch name
-                                              (let ((src (nixos--flake-input-source child)))
-                                                (if src (concat ": " src) "")))
-                                      lines)
-                                (unless (or (null val) (member val visited))
-                                  (walk val child-prefix (cons val visited))))))))))))
-      (walk root "" (list root)))
-    (nreverse lines)))
+flake itself.  Each node is (NAME SOURCE CHILDREN...), where SOURCE
+is the original URL of the input or nil, and each child has the same
+shape.  An input that follows another input renders as (NAME follows
+TEXT).  The tree carries no display text, so the caller owns the
+indentation and the faces."
+  (cl-labels ((inputs-of (node)
+                (and (hash-table-p node) (gethash "inputs" node)))
+              (names-of (inputs)
+                (and inputs
+                     (sort (let (names)
+                             (maphash (lambda (name _) (push name names))
+                                      inputs)
+                             names)
+                           #'string<)))
+              (walk (node-id visited)
+                (let* ((inputs (inputs-of (gethash node-id nodes)))
+                       (names (names-of inputs)))
+                  (mapcar
+                   (lambda (name)
+                     (let ((value (gethash name inputs)))
+                       (if (vectorp value)
+                           (list name 'follows (aref value 0))
+                         (let ((child (gethash value nodes)))
+                           (append (list name (nixos--flake-input-source child))
+                                   (unless (or (null value)
+                                               (member value visited))
+                                     (walk value (cons value visited))))))))
+                   names))))
+    (walk root (list root))))
+
+(defun nixos--flake-inputs (meta)
+  "Return the input tree of the flake metadata META, or nil."
+  (and (hash-table-p meta)
+       (let ((locks (gethash "locks" meta)))
+         (and (hash-table-p locks)
+              (nixos--flake-input-tree (gethash "nodes" locks)
+                                       (gethash "root" locks))))))
 
 (defun nixos--flake-metadata-fields (meta)
   "Return an alist of ((LABEL . VALUE) ...) from flake metadata META.
 META is the hash table from `nix flake metadata --json', or nil.
-Only human-meaningful fields are extracted: description, path, url,
-revision, last-modified and inputs.  Sparse values are omitted.  The
-\"Inputs:\" value is a list of tree display lines (see
-`nixos--flake-input-tree')."
+Only human-meaningful scalar fields are extracted: description, path,
+url, revision and last-modified.  Sparse values are omitted.  The
+input tree comes from `nixos--flake-inputs', because it folds."
   (and (hash-table-p meta)
        (let ((desc (gethash "description" meta))
              (path (gethash "path" meta))
              (url (gethash "url" meta))
              (rev (gethash "revision" meta))
-             (last (gethash "lastModified" meta))
-             (inputs (and (hash-table-p (gethash "locks" meta))
-                          (gethash "nodes" (gethash "locks" meta))))
-             (root (and (hash-table-p (gethash "locks" meta))
-                        (gethash "root" (gethash "locks" meta)))))
+             (last (gethash "lastModified" meta)))
          (delq nil
                (list
                 (when (and desc (not (string-empty-p desc)))
                   (cons "Description:"
                         (propertize desc 'face 'nixos-description)))
                 (when (and path (not (string-empty-p path)))
-                  ;; Same on-disk-status face scheme as the package detail
-                  ;; buffer's `Store path:' field (see `nixos--display-package').
-                  (cons "Path:"
-                        (propertize path
-                                    'face (cond ((file-directory-p path)
-                                                 'dired-directory)
-                                                ((file-exists-p path) nil)
-                                                (t 'error)))))
+                  ;; A flake source path always names a directory, so it
+                  ;; takes the Dired face even when it is not on disk.
+                  (cons "Path:" (propertize path 'face 'dired-directory)))
                 (when (and url (not (string-empty-p url)))
                   (cons "URL:" url))
                 (when (and rev (not (string-empty-p rev)))
@@ -1312,9 +1450,7 @@ revision, last-modified and inputs.  Sparse values are omitted.  The
                         (propertize
                          (format-time-string "%Y-%m-%d %H:%M"
                                              (seconds-to-time last))
-                         'face 'nixos-date)))
-                (when (and (hash-table-p inputs) (stringp root))
-                  (cons "Inputs:" (nixos--flake-input-tree inputs root))))))))
+                         'face 'magit-log-date))))))))
 
 (defun nixos--abbreviate-path (path)
   "Abbreviate a filesystem PATH for display, or return it unchanged.
@@ -1328,124 +1464,44 @@ through `abbreviate-file-name'; URLs and flake references such as
 (defun nixos--flake-overview-refresh ()
   "Refresh the flake overview buffer.
 A refresh runs `nix flake show' again on the reference of the
-buffer, keeps the folds of the reader and keeps point on its line."
+buffer, and the render keeps the folds of the reader and the line
+of point."
   (interactive)
-  (let ((ref nixos--browse-flake-ref)
-        (record (nixos--point-record))
-        (collapsed (nixos--browse-collapsed-sections)))
+  (let ((ref nixos--browse-flake-ref))
     (unless ref
       (user-error "No flake reference in this buffer"))
-    (nixos-flake ref)
-    (nixos--browse-restore-sections collapsed)
-    (goto-char (or (nixos--record-position record) (point-min)))))
+    (nixos-flake ref)))
 
 (defun nixos--display-flake-overview (ref cache &optional meta)
   "Create a whole-flake detail buffer for REF from CACHE.
 CACHE is the path-keyed leaf hash table from
 `nixos--flake-flatten'.  META is optional data from
 `nix flake metadata --json' shown as flake-level fields above the
-output list.  Pressing RET (or clicking) on a line opens the
-node's detail buffer via `nixos--display-flake'."
+output list.  Pressing RET (or clicking) on a line opens the node's
+detail buffer via `nixos--display-flake'."
   (let* ((buf-name (format "*nixos-flake %s*"
                            (nixos--abbreviate-path ref)))
          (buf (get-buffer-create buf-name))
-         (names (sort (hash-table-keys cache) #'string<))
          (key (list 'flake-overview ref cache meta)))
     (with-current-buffer buf
       (nixos--unless-rendered key
-        (let ((inhibit-read-only t))
-          (erase-buffer)
-          (nixos-browse-mode)
-          (use-local-map nixos-flake-overview-mode-map)
-          ;; The overview buffer is not bookmarkable (node-only bookmarks),
-          ;; and regenerating it re-runs `nix flake show' on the ref.
-          (setq-local bookmark-make-record-function nil)
-          (setq-local revert-buffer-function #'nixos--flake-overview-refresh)
-          (nixos--browse-setup 'flake ref)
-          (setq-local nixos--browse-flake-ref ref)
-          (setq-local nixos--browse-name ref)
-          ;; Fields are right-aligned to the longest label plus one column,
-          ;; so every value starts on the same column (the same pattern used
-          ;; for build-input alignment in `nixos--display-package').
-          (let* ((fields (nixos--flake-metadata-fields meta))
-                 (label-width (apply #'max (mapcar #'string-width
-                                                   (cons "Flake:" (mapcar #'car fields)))))
-                 ;; Pad LABEL to label-width, then one separating space.
-                 (pad (lambda (label)
-                        (format (format "%%-%ds " label-width) label))))
-            (let ((start (point)))
-              (insert (propertize (funcall pad "Flake:")
-                                  'face 'nixos-field-label)
-                      (propertize (nixos--abbreviate-path ref)
-                                  'face 'nixos-package-name)
-                      "\n")
-              (nixos--mark-section start (1- (point)) "Flake:"))
-            ;; Scalar metadata fields (Flake, Description, ...), each label and
-            ;; value on one line, right-aligned to the longest label.  The
-            ;; multi-line Inputs list is handled separately below.
-            (dolist (field fields)
-              (when (not (listp (cdr field)))
-                (insert (propertize (funcall pad (car field))
-                                    'face 'nixos-field-label
-                                    'nixos-field (nixos--field-key (car field)))
-                        (if (cdr field) (nixos--abbreviate-path (cdr field)) "")
-                        "\n")))
-            ;; Inputs tree, rendered like the Outputs section below: a header
-            ;; line then the nested tree, separated by a blank line.  Each line
-            ;; is already formatted with its tree prefix, so it is inserted
-            ;; verbatim (no re-alignment or abbreviation).  The tree can run
-            ;; long, so its header folds.
-            (let ((inputs (cdr (assoc "Inputs:" fields))))
-              (when inputs
-                (insert "\n")
-                (nixos--insert-section "Inputs:")
-                (dolist (item inputs)
-                  (insert item "\n"))))
-            (insert "\n")
-            ;; Node list header.  The count changes with the flake, so the
-            ;; section keeps its plain name and only the display text
-            ;; carries the number.
-            (let ((start (point)))
-              (insert (propertize (format "Outputs (%d):" (length names))
-                                  'face 'nixos-field-label)
-                      "\n")
-              (nixos--mark-section start (1- (point)) "Outputs:"))
-            ;; Clickable lines.  The type and description columns align at the
-            ;; longest node path plus one column.
-            (let* ((max-path (if names
-                                 (apply #'max (mapcar #'string-width names))
-                               0))
-                   (max-type (apply #'max 0
-                                    (mapcar (lambda (n)
-                                              (let ((ty (gethash "type" (gethash n cache))))
-                                                (if ty (string-width ty) 0)))
-                                            names))))
-              (dolist (name names)
-                (let* ((data (gethash name cache))
-                       (type (gethash "type" data))
-                       (type-w (and type (string-width type)))
-                       (desc (nixos--trim-description
-                              (nixos--slurp-description data))))
-                  (insert-text-button name
-                                      'action
-                                      (lambda (_)
-                                        (nixos--display-flake
-                                         name (gethash name cache) ref))
-                                      'follow-link t
-                                      'face 'link
-                                      'help-echo (format "View output: %s" name)
-                                      'button-data name)
-                  (insert (make-string (+ 1 (- max-path (string-width name))) ?\s))
-                  (when type
-                    (insert (propertize type 'face 'nixos-field-label))
-                    (when desc
-                      (insert (make-string (+ 1 (- max-type type-w)) ?\s))))
-                  (when desc
-                    (insert (propertize desc 'face 'nixos-description)))
-                  (insert "\n")))))
-          (goto-char (point-min))
-          (set-buffer-modified-p nil))))
+        (nixos-browse-mode)
+        (use-local-map nixos-flake-overview-mode-map)
+        ;; The overview buffer is not bookmarkable (node-only bookmarks),
+        ;; and regenerating it re-runs `nix flake show' on the ref.
+        (setq-local bookmark-make-record-function nil)
+        (setq-local revert-buffer-function #'nixos--flake-overview-refresh)
+        (nixos--browse-setup 'flake ref)
+        (setq-local nixos--browse-flake-ref ref)
+        (setq-local nixos--browse-name ref)
+        (setq-local nixos--browse-data
+                    (list :ref ref
+                          :cache cache
+                          :meta meta
+                          :inputs (nixos--flake-inputs meta)))
+        (nixos--render 'flake 'nixos-flake-overview-sections-hook)))
     (pop-to-buffer buf nixos-display-buffer-action)))
+
 ;;;###autoload
 (defun nixos-flake (&optional flake-ref)
   "Show the outputs of a Nix flake in a detail buffer.
@@ -1677,7 +1733,9 @@ Intended for use as `bookmark-make-record-function'."
     (type . ,nixos--browse-type)
     (name . ,nixos--browse-name)
     (handler . nixos--bookmark-jump)
-    (source . ,nixos--browse-source)))
+    (source . ,(if (eq nixos--browse-type 'flake)
+                   nixos--browse-flake-ref
+                 nixos--browse-source))))
 
 ;;;###autoload
 (defun nixos--bookmark-jump (bookmark)
@@ -1708,7 +1766,7 @@ Called by the bookmark system."
                     (let ((default-directory dir))
                       (nixos-package-local)))
                    (_ (nixos-package name))))
-        (flake (let ((ref (cdr (alist-get 'source bookmark))))
+        (flake (let ((ref (alist-get 'source bookmark)))
                  (let ((data (and nixos--flake-cache
                                   (gethash name nixos--flake-cache))))
                    (if data
@@ -2496,6 +2554,7 @@ fit starts from.  Internal use only."
          ,(format "Major mode for browsing Nix %s in a sortable table.
 
 \\{%s}" typestr mode-map)
+         :interactive nil
          (setq tabulated-list-format ,columns)
          (setq tabulated-list-padding 2)
          (setq tabulated-list-sort-key ',sort-key)

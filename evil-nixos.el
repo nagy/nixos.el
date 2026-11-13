@@ -55,8 +55,10 @@
 
 ;; Value-less defvars: silence the byte-compiler without binding the
 ;; variables, so Evil's own keymaps survive when Evil loads later.
-(defvar evil-normal-state-map)
+(defvar evil-fold-list)
 (defvar evil-motion-state-map)
+(defvar evil-normal-state-map)
+(defvar magit-root-section)
 
 (declare-function evil-define-key* "evil")
 (declare-function evil-set-initial-state "evil")
@@ -119,7 +121,7 @@ BINDINGS is an alist of key string to command or keymap."
 
 (defconst evil-nixos-detail-bindings
   '(("w" . nixos-browse-copy-store-path)
-    ("TAB" . nixos-browse-toggle-section))
+    ("TAB" . magit-section-toggle))
   "The single keys that a detail buffer keeps from its Emacs map.")
 
 (defconst evil-nixos-table-g-bindings
@@ -148,6 +150,23 @@ entry on search.nixos.org."
                       ("}" . nixos--browse-table-resize-column)
                       ("b" . ,search-url)))
   keymap)
+
+;; A detail buffer is a `magit-section' tree, and `evil-fold-list'
+;; carries no entry for one, while `evil--mode-p' compares the major
+;; mode name itself.  The commands of the fold list wrap the section
+;; commands, because those take the section as an argument.
+(add-to-list 'evil-fold-list
+             `((nixos-browse-mode)
+               :open-all   (lambda () (magit-section-show magit-root-section))
+               :close-all  magit-section-show-level-1-all
+               :toggle     (lambda () (magit-section-toggle
+                                       (magit-current-section)))
+               :open       (lambda () (magit-section-show
+                                       (magit-current-section)))
+               :open-rec   (lambda () (magit-section-show-children
+                                       (magit-current-section)))
+               :close      (lambda () (magit-section-hide
+                                       (magit-current-section)))))
 
 (evil-set-initial-state 'nixos-browse-mode 'normal)
 (evil-set-initial-state 'nixos-browse-options-mode 'normal)
