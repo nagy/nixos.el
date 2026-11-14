@@ -20,6 +20,10 @@
       ...
     }:
     flake-parts.lib.mkFlake { inherit inputs; } {
+      # Brings the `treefmt` option, the `formatter` that `nix fmt` runs
+      # and the `checks.treefmt` gate that fails on an unformatted file.
+      imports = [ treefmt-nix.flakeModule ];
+
       # Emacs packages are pure Elisp: no ELF binaries, so evaluate on
       # every Linux arch (and darwin if the deps exist there).
       systems = [
@@ -63,6 +67,7 @@
                   pkgs.writableTmpDirAsHomeHook
                   pkgs.jq
                 ];
+                meta.description = "Offline package-search index for nixos.el";
               }
               ''
                 echo '{"flakes":[],"version":2}' > empty-registry.json
@@ -86,10 +91,10 @@
           packages.nixos = melpaBuild {
             pname = "nixos";
             # Nix rejects versions Nixpkgs cannot parse. Convention for
-            # unreleased packages: <upstream-version>-unstable-<YYYY-MM-DD>,
-            # where the date is the last commit touching the source.
-            # Derive the date from the flake self-reference. Fall back to
-            # the epoch when the source is not a git checkout.
+            # unreleased packages: <upstream-version>-unstable-<YYYY-MM-DD>.
+            # Derive the date from the flake self-reference: it names the
+            # last commit of the tree, docs-only commits included. Fall
+            # back to the epoch when the source is not a git checkout.
             version =
               let
                 d = self.lastModifiedDate or "19700101000000";
@@ -194,6 +199,7 @@
                   pkgs.writableTmpDirAsHomeHook
                 ];
                 src = config.packages.nixos.src;
+                meta.description = "Lint check for nixos.el (package-lint + checkdoc)";
               }
               ''
                 # src is pre-filtered, so copy the whole tree explicitly
@@ -219,8 +225,11 @@
               '';
 
           # `nix fmt` formats the flake (and any future sources) via
-          # treefmt, never the formatters standalone.
-          formatter = treefmt-nix.lib.mkWrapper pkgs {
+          # treefmt, never the formatters standalone.  The flake-parts
+          # module wires `formatter` and `checks.treefmt` from this block.
+          # The module defaults `projectRootFile` to ".git/config", which
+          # a store copy lacks, so pin it to the flake itself.
+          treefmt = {
             projectRootFile = "flake.nix";
             programs.nixfmt.enable = true;
           };
@@ -231,7 +240,19 @@
             #   emacs -l result/share/emacs/site-lisp/elpa/nixos-*/nixos-autoloads.el
             # Evil and nix-mode come with it, so the opt-in Evil layer
             # loads without extra setup.
-            packages = [ emacsWithDeps ];
+            #
+            # The package shells out to `nix' and `nix-instantiate', and a
+            # `nix develop' shell starts without them, so add the CLI here
+            # instead of leaning on the caller's environment.
+            #
+            # `config.treefmt.build.wrapper' is the same treefmt that
+            # `nix fmt' runs, so a bare `treefmt' formats like `nix fmt'
+            # does.  `nix fmt' works without it.
+            packages = [
+              emacsWithDeps
+              pkgs.nix
+              config.treefmt.build.wrapper
+            ];
           };
         };
     };

@@ -14,14 +14,21 @@ in `test/`, one file per source unit that needs one:
 
 ```sh
 nix build                                # build + run tests
-nix flake check                          # package + checks.lint
+nix flake check                          # package + checks.lint + checks.treefmt
 nix build .#checks.x86_64-linux.lint     # checkdoc + package-lint
+nix fmt                                  # format via treefmt (nixfmt)
 emacs --batch -L . -L test -l test/nixos-test.el -f ert-run-tests-batch-and-exit
 emacs --batch -L . -L test -l test/evil-nixos-test.el -f ert-run-tests-batch-and-exit
 ```
 
+The flake imports `treefmt-nix.flakeModule`, so the `treefmt` block
+of `perSystem` gives both `formatter` (`nix fmt`) and
+`checks.treefmt`.  That check fails on an unformatted file, so run
+`nix fmt` before you commit.  Never run `nixfmt` on its own: the
+flake carries the formatter set.
+
 The Evil test file needs Evil, so `checkPhase` runs the whole suite
-with the `emacsWithEvil` wrapper of the flake.  The package itself
+with the `emacsWithDeps` wrapper of the flake.  The package itself
 never loads Evil, and `evil-nixos.el` byte-compiles without it.
 
 To skip the NixOS options JSON eval, pass an existing JSON file to the
@@ -189,8 +196,13 @@ to skip the eval.
 
 The package `version` comes from `self.lastModifiedDate`.  The flake
 passes `self` into `outputs` and derives `0-unstable-YYYY-MM-DD` from
-the source tree date.  No manual version bumps.  Falls back to the
-epoch when the source is not a git checkout.
+the source tree date.  No manual version bumps.  That date is the last
+commit of the whole tree, not the last commit touching the sources.
+Falls back to the epoch when the source is not a git checkout.
+
+The flake's `systems` list both Linux arches, so `meta.platforms`
+claims `lib.platforms.unix` without a darwin build behind it.  Keep
+that claim only while the Elisp deps stay darwin-installable.
 
 ### Memoization
 
@@ -752,11 +764,12 @@ way: `checks.lint` fails on any finding.
 
 - Tests live in `test/` (singular), one file per source unit that
   needs one, named `<unit>-test.el`: `test/nixos-test.el`,
-  `test/evil-nixos-test.el`.  Shared fixtures go in
-  `test/nixos-test-helper.el`, which never matches `*-test.el`, so the
-  glob loader stays a test-only list.  `ol-nixos.el` tests live in
-  `test/nixos-test.el`, because they load that module through the
-  core feature.
+  `test/evil-nixos-test.el`.  A shared fixture file goes in
+  `test/nixos-test-helper.el` when a second test file needs it: that
+  name never matches `*-test.el`, so the glob loader stays a
+  test-only list.  No such file exists today.  `ol-nixos.el` tests
+  live in `test/nixos-test.el`, because they load that module through
+  the core feature.
 - `checkPhase` loads the suite by glob, not by name:
   `printf -- "-l %s " test/*-test.elc` under `failglob`.  A new test
   file therefore needs no flake edit.  The guard on the substitution
