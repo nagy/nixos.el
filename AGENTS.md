@@ -928,8 +928,12 @@ foreground (light/dark) for the `Revision:` flake hash, in the spirit
 of `magit-hash`.  No `(require 'package)` or `(require 'org)` needed —
 the `:inherit` list resolves left-to-right, skipping undefined faces.
 `nixos-date` is applied to the per-input dates of the flake input
-tree; the `Last modified:` flake field takes `magit-log-date` directly,
-so a date reads like a date in a Magit log.  The flake overview
+tree and to the `Last modified:` flake field, so every date in a flake
+buffer reads the same.  Do not paint these with `magit-log-date`:
+that face lives in `magit-log.el`, and the package requires
+`magit-section` alone.  Emacs ignores an unknown face in a `face`
+property, so the text shows in the default face and the build reports
+nothing.  The flake overview
 `Description:` field uses `nixos-description`, and its `Path:` field
 takes `dired-directory`, because a flake source path always names a
 directory even when it is not on disk.  The package `Store path:`

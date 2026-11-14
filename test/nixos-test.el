@@ -2476,12 +2476,12 @@ into the matching export while point sits in a table."
       (should (equal (cdr (assoc "Path:" fields)) "/nix/store/abc-source"))
       (should (equal (cdr (assoc "Revision:" fields)) "f00d"))
       ;; A flake source path takes the Dired face, and the date takes
-      ;; the face of a Magit log date.
+      ;; the date face of this package.
       (should (eq (get-text-property 0 'face (cdr (assoc "Path:" fields)))
                   'dired-directory))
       (should (eq (get-text-property
                    0 'face (cdr (assoc "Last modified:" fields)))
-                  'magit-log-date))
+                  'nixos-date))
       ;; The input tree folds, so it carries no field of its own.
       (should-not (assoc "Inputs:" fields)))))
 

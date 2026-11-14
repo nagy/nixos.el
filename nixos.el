@@ -1450,7 +1450,7 @@ input tree comes from `nixos--flake-inputs', because it folds."
                         (propertize
                          (format-time-string "%Y-%m-%d %H:%M"
                                              (seconds-to-time last))
-                         'face 'magit-log-date))))))))
+                         'face 'nixos-date))))))))
 
 (defun nixos--abbreviate-path (path)
   "Abbreviate a filesystem PATH for display, or return it unchanged.
