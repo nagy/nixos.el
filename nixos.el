@@ -620,6 +620,15 @@ POSITION is the package's `meta.position' string, if any."
   (declare (pure t) (side-effect-free t))
   (string-trim-right label "[ \t:]+"))
 
+(defun nixos--propertize (string face)
+  "Return STRING painted with FACE under both face properties.
+`face' names FACE for a caller that reads a text property, and
+`font-lock-face' keeps the paint.  `magit-section-mode' sets
+`font-lock-defaults', so `font-lock-mode' turns on in a detail
+buffer, and fontification removes a plain `face' property."
+  (declare (pure t) (side-effect-free t))
+  (propertize string 'face face 'font-lock-face face))
+
 (defconst nixos--field-label-width 14
   "Width of a field label, in columns.
 The labels line up with their values, so `Version:' and
@@ -645,19 +654,17 @@ reads like a section of a Magit buffer.  Both `face' and
 `font-lock-face' name it, as a Magit heading is painted.  TEXT
 carries no colon, because a Magit heading carries none either: a
 field label ends with one and a heading does not."
-  (concat (propertize text 'face 'magit-section-heading
-                      'font-lock-face 'magit-section-heading)
+  (concat (nixos--propertize text 'magit-section-heading)
           (if (and count (> count 0) magit-section-show-child-count)
-              (propertize (format " (%d)" count)
-                          'face 'magit-section-child-count
-                          'font-lock-face 'magit-section-child-count)
+              (nixos--propertize (format " (%d)" count)
+                                 'magit-section-child-count)
             "")))
 
 (defun nixos--node-heading (text)
   "Return TEXT as the heading of a node section.
 The face is `default', so a node reads as plain content of the group
 above it.  A node folds, but it is not a bold section heading."
-  (propertize text 'face 'default 'font-lock-face 'default))
+  (nixos--propertize text 'default))
 
 (defun nixos--insert-group-heading (label count)
   "Insert the heading of a group section for LABEL.
@@ -711,7 +718,7 @@ flake holds one section per output and the menu would flood."
 (defun nixos-insert-option-title ()
   "Insert the title section of an option buffer."
   (nixos--insert-title nixos--browse-name
-                       (propertize nixos--browse-name 'face 'nixos-package-name)))
+                       (nixos--propertize nixos--browse-name 'nixos-package-name)))
 
 (defun nixos-insert-option-fields ()
   "Insert the fields of an option buffer."
@@ -742,9 +749,10 @@ flake holds one section per output and the menu would flood."
 (defun nixos-insert-package-title ()
   "Insert the title section of a package buffer."
   (nixos--insert-title "Name"
-                       (propertize (nixos--field-label "Name:")
-                                   'face 'nixos-field-label)
-                       (propertize nixos--browse-name 'face 'nixos-package-name)))
+                       (nixos--propertize (nixos--field-label "Name:")
+                                          'nixos-field-label)
+                       (nixos--propertize nixos--browse-name
+                                          'nixos-package-name)))
 
 (defun nixos--store-path-face (path)
   "Return the face of PATH, by its status on disk."
@@ -769,7 +777,8 @@ flake holds one section per output and the menu would flood."
          (position (alist-get 'position info)))
     (when out-path
       (nixos--field "Store path:"
-                    (propertize out-path 'face (nixos--store-path-face out-path)))
+                    (nixos--propertize
+                     out-path (nixos--store-path-face out-path)))
       (when (and (null nixos--browse-source) (file-directory-p out-path))
         (setq default-directory (file-name-as-directory out-path))))
     (when meta
@@ -790,8 +799,8 @@ flake holds one section per output and the menu would flood."
       (when (and position (stringp position) (not (string-empty-p position)))
         ;; A position is long, so it takes a line of its own.
         (magit-insert-section (nixos-field "Position")
-          (insert (propertize (nixos--field-label "Position:")
-                              'face 'nixos-field-label)
+          (insert (nixos--propertize (nixos--field-label "Position:")
+                                     'nixos-field-label)
                   "\n")
           (insert-text-button position
                               'action (lambda (_) (find-file-at-point position))
@@ -850,15 +859,15 @@ sections line up."
                                         (lambda (_) (nixos-package dep-name))
                                         'follow-link t
                                         'face 'link
+                                        'font-lock-face 'link
                                         'help-echo
                                         (format "Browse package: %s" dep-name))
                     (when dep-store
                       (insert (make-string
                                (+ (- width (string-width dep-name)) 2)
                                ?\s))
-                      (insert (propertize dep-store
-                                          'face (nixos--store-path-face
-                                                 dep-store)))))
+                      (insert (nixos--propertize
+                               dep-store (nixos--store-path-face dep-store)))))
                 (insert "???")))
             (insert "\n")))))))
 
@@ -876,7 +885,7 @@ sections line up."
 (defun nixos-insert-flake-title ()
   "Insert the title section of a flake node buffer."
   (nixos--insert-title nixos--browse-name
-                       (propertize nixos--browse-name 'face 'nixos-package-name)))
+                       (nixos--propertize nixos--browse-name 'nixos-package-name)))
 
 (defun nixos-insert-flake-fields ()
   "Insert the fields of a flake node buffer."
@@ -911,10 +920,11 @@ plus one space, so every value starts on the same column."
          (fields (nixos--flake-metadata-fields (plist-get data :meta)))
          (width (nixos--flake-label-width fields)))
     (nixos--insert-title "Flake"
-                         (propertize (nixos--field-label "Flake:" width)
-                                     'face 'nixos-field-label)
-                         (propertize (nixos--abbreviate-path (plist-get data :ref))
-                                     'face 'nixos-package-name))
+                         (nixos--propertize (nixos--field-label "Flake:" width)
+                                            'nixos-field-label)
+                         (nixos--propertize
+                          (nixos--abbreviate-path (plist-get data :ref))
+                          'nixos-package-name))
     (dolist (field fields)
       (nixos--field (car field) (cdr field) nil width))))
 
@@ -978,16 +988,17 @@ full path of its node, so a fold survives a render."
                                   (nixos--display-flake name node ref))
                                 'follow-link t
                                 'face 'link
+                                'font-lock-face 'link
                                 'help-echo (format "View output: %s" name)
                                 'button-data name)
             (insert (make-string (+ 1 (- max-path (string-width name))) ?\s))
             (when type
-              (insert (propertize type 'face 'nixos-field-label))
+              (insert (nixos--propertize type 'nixos-field-label))
               (when desc
                 (insert (make-string (+ 1 (- max-type (string-width type)))
                                      ?\s))))
             (when desc
-              (insert (propertize desc 'face 'nixos-description)))
+              (insert (nixos--propertize desc 'nixos-description)))
             (insert "\n")))))))
 
 
@@ -1132,16 +1143,16 @@ applies to it.  LABEL is padded to WIDTH columns, which defaults to
 as its value, so a render keeps point on the field and
 `nixos--browse-imenu-index' lists it."
   (magit-insert-section (nixos-field (nixos--field-key label))
-    (insert (propertize (nixos--field-label label width)
-                        'face 'nixos-field-label))
+    (insert (nixos--propertize (nixos--field-label label width)
+                               'nixos-field-label))
     (when (and value (not (string-empty-p value)))
-      (insert (if face (propertize value 'face face) value)))
+      (insert (if face (nixos--propertize value face) value)))
     (insert "\n")))
 
 (defun nixos--link (label url)
   "Insert a clickable field section LABEL for URL."
   (magit-insert-section (nixos-field (nixos--field-key label))
-    (insert (propertize (nixos--field-label label) 'face 'nixos-field-label))
+    (insert (nixos--propertize (nixos--field-label label) 'nixos-field-label))
     (when url
       (insert-text-button url
                           'action (lambda (_) (browse-url url))
@@ -1371,10 +1382,10 @@ official `nix flake metadata' input tree."
       (when src
         (if (and last (not (eq last :null)))
             (concat src " ("
-                    (propertize
+                    (nixos--propertize
                      (format-time-string "%Y-%m-%d %H:%M:%S"
                                          (seconds-to-time last))
-                     'face 'nixos-date)
+                     'nixos-date)
                     ")")
           src)))))
 
@@ -1435,22 +1446,22 @@ input tree comes from `nixos--flake-inputs', because it folds."
                (list
                 (when (and desc (not (string-empty-p desc)))
                   (cons "Description:"
-                        (propertize desc 'face 'nixos-description)))
+                        (nixos--propertize desc 'nixos-description)))
                 (when (and path (not (string-empty-p path)))
                   ;; A flake source path always names a directory, so it
                   ;; takes the Dired face even when it is not on disk.
-                  (cons "Path:" (propertize path 'face 'dired-directory)))
+                  (cons "Path:" (nixos--propertize path 'dired-directory)))
                 (when (and url (not (string-empty-p url)))
                   (cons "URL:" url))
                 (when (and rev (not (string-empty-p rev)))
                   (cons "Revision:"
-                        (propertize rev 'face 'nixos-revision)))
+                        (nixos--propertize rev 'nixos-revision)))
                 (when (and last (not (eq last :null)))
                   (cons "Last modified:"
-                        (propertize
+                        (nixos--propertize
                          (format-time-string "%Y-%m-%d %H:%M"
                                              (seconds-to-time last))
-                         'face 'nixos-date))))))))
+                         'nixos-date))))))))
 
 (defun nixos--abbreviate-path (path)
   "Abbreviate a filesystem PATH for display, or return it unchanged.
@@ -2048,7 +2059,7 @@ name order, and `tabulated-list-print' sorts each group on its own."
           (puthash group nil buckets))
         (puthash group (cons entry (gethash group buckets)) buckets)))
     (mapcar (lambda (group)
-              (cons (propertize group 'face 'nixos-field-label)
+              (cons (nixos--propertize group 'nixos-field-label)
                     (nreverse (gethash group buckets))))
             (sort names #'string<))))
 
@@ -2593,7 +2604,7 @@ fit starts from.  Internal use only."
 
        (defun ,entry-fn (name data)
          ,(format "Return a `tabulated-list' entry for %s NAME with DATA." typestr)
-         (list name (vector (propertize name 'face 'nixos-package-name) ,@extract-fields)))
+         (list name (vector (nixos--propertize name 'nixos-package-name) ,@extract-fields)))
 
        (defun ,entries-fn (&optional name-list)
          ,(format "Generate `tabulated-list-entries' for %s.
@@ -2674,9 +2685,10 @@ to filter the view in-place." typestr typestr mode-map visit search-url)
   :sort-key ("Option" . nil)
   :group-fn #'nixos--option-group-name
   :extract-fields ((or (gethash "type" data) "")
-                   (propertize (or (nixos--trim-description
-                                    (nixos--slurp-description data)) "")
-                               'face 'nixos-description))
+                   (nixos--propertize
+                    (or (nixos--trim-description
+                         (nixos--slurp-description data)) "")
+                    'nixos-description))
   :visit-fn nixos-option
   :url-fmt nixos-option-search-url-template
   :cache-fn nixos--options-load
@@ -2719,11 +2731,12 @@ Add this alongside `nixos-thing-at-point-setup' in
             ("Description" 0 nil)]
   :sort-key ("Package" . nil)
   :width-fn #'nixos--package-canonical-widths
-  :extract-fields ((propertize (or (gethash "version" data) "")
-                               'face 'nixos-version)
-                   (propertize (or (nixos--trim-description
-                                    (nixos--slurp-description data)) "")
-                               'face 'nixos-description))
+  :extract-fields ((nixos--propertize (or (gethash "version" data) "")
+                                      'nixos-version)
+                   (nixos--propertize
+                    (or (nixos--trim-description
+                         (nixos--slurp-description data)) "")
+                    'nixos-description))
   :visit-fn nixos-package
   :url-fmt nixos-package-search-url-template
   :cache-fn nixos--packages-load

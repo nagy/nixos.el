@@ -425,19 +425,27 @@ the heading string, before the children exist, and only when
 buffer order.  The nodes of a flake overview stay out, because a big
 flake holds one section per output and the menu would flood.
 
-Faces come from `propertize`, which is safe here: nothing in this
-package calls `font-lock-ensure`, so no unfontify step runs and a
-`face` property survives.  Pass an already propertized string to
+Faces come from `nixos--propertize`, which names the face in both the
+`face` and the `font-lock-face` text property.  Both are required:
+`magit-section-mode` sets `font-lock-defaults`, so `font-lock-mode`
+turns on in a detail buffer, and `font-lock-default-unfontify-region`
+removes a plain `face` property.  A `face` that names the face alone
+therefore shows nothing in an interactive session and still looks
+correct in batch, where no fontification runs.  Never paint buffer
+text with a bare `(propertize STRING 'face FACE)` in this package.
+A button takes `'font-lock-face` beside `'face`, because a button
+face is a text property too.
+
+Pass an already propertized string to
 `magit-insert-heading`; when the string carries a face, Magit inserts
 it unchanged instead of painting `magit-section-heading`.
 
-`nixos--heading` sets both `face` and `font-lock-face` to
-`magit-section-heading` on the label and to
-`magit-section-child-count` on the count, the way
+`nixos--heading` paints the label with `magit-section-heading` and the
+count with `magit-section-child-count`, the way
 `magit--propertize-face` paints a Magit heading.  `nixos--node-heading`
 does the same with the `default` face.  Set both properties: a caller
-that inspects a heading looks for `font-lock-face`, and a buffer
-without the font-lock alias still shows the explicit `face`.
+that inspects a heading looks for `font-lock-face`, and the explicit
+`face` names the face that a test or a user command reads.
 
 ### Point keeping across a refresh
 
@@ -917,9 +925,10 @@ heading, so a group reads like a section of a Magit buffer.  Field
 labels keep `nixos-field-label`, because a field line shows a value and
 is not a folded block.
 
-Faces come from `propertize` and not from font-lock keywords: nothing
-in this package calls `font-lock-ensure`, so no unfontify step removes
-a `face` property.  A propertized string passed to
+Faces come from `nixos--propertize` and not from font-lock keywords.
+That helper names the face in both the `face` and the `font-lock-face`
+property, so the paint survives the fontification of a detail buffer.
+A propertized string passed to
 `magit-insert-heading` keeps its face, because Magit inserts a heading
 that already carries one unchanged.  `nixos-version`
 and `nixos-revision` inherit from `shadow`, a plain built-in.

@@ -2603,5 +2603,48 @@ so the refresh must accept them."
         (should (equal reverted "/tmp/ref")))
       (kill-buffer displayed))))
 
+(ert-deftest nixos-propertize-names-both-face-properties ()
+  "`nixos--propertize' names its face in both face properties."
+  (let ((string (nixos--propertize "x" 'shadow)))
+    (should (eq (get-text-property 0 'face string) 'shadow))
+    (should (eq (get-text-property 0 'font-lock-face string) 'shadow))))
+
+(ert-deftest nixos-rendered-faces-survive-font-lock ()
+  "A rendered detail buffer keeps every face after fontification.
+`magit-section-mode' sets `font-lock-defaults', so `font-lock-mode'
+turns on in an interactive session, and unfontification removes a
+plain `face' property.  Each face must also name `font-lock-face'."
+  (let* ((cache (make-hash-table :test 'equal))
+         (node (make-hash-table :test 'equal))
+         (meta (make-hash-table :test 'equal))
+         (displayed nil))
+    (puthash "type" "derivation" node)
+    (puthash "description" "A greeting program" node)
+    (puthash "packages.x86_64-linux.hello" node cache)
+    (puthash "lastModified" 1788640836 meta)
+    (puthash "description" "A demo flake" meta)
+    (cl-letf (((symbol-function 'pop-to-buffer)
+               (lambda (buf &optional _action)
+                 (setq displayed buf)
+                 (set-buffer buf))))
+      (nixos--display-flake-overview "/tmp/ref" cache meta))
+    (unwind-protect
+        (with-current-buffer displayed
+          (should font-lock-defaults)
+          (font-lock-mode 1)
+          (font-lock-ensure)
+          (cl-labels ((paint (needle)
+                        (goto-char (point-min))
+                        (should (search-forward needle nil t))
+                        (get-char-property (1- (point)) 'font-lock-face)))
+            (should (eq (paint "Last modified:") 'nixos-field-label))
+            (should (eq (paint "A demo flake") 'nixos-description))
+            (should (eq (paint "2026-") 'nixos-date))
+            (should (eq (paint "Outputs") 'magit-section-heading))
+            (should (eq (paint "derivation") 'nixos-field-label))
+            (should (eq (paint "A greeting program") 'nixos-description))
+            (should (eq (paint "packages.x86_64-linux.hello") 'link))))
+      (kill-buffer displayed))))
+
 (provide 'nixos-test)
 ;;; nixos-test.el ends here
