@@ -1461,11 +1461,12 @@ through `abbreviate-file-name'; URLs and flake references such as
       (abbreviate-file-name path)
     path))
 
-(defun nixos--flake-overview-refresh ()
+(defun nixos--flake-overview-refresh (&rest _ignored)
   "Refresh the flake overview buffer.
-A refresh runs `nix flake show' again on the reference of the
-buffer, and the render keeps the folds of the reader and the line
-of point."
+Optional IGNORED args accommodate `revert-buffer-function' calling
+convention.  A refresh runs `nix flake show' again on the reference
+of the buffer, and the render keeps the folds of the reader and the
+line of point."
   (interactive)
   (let ((ref nixos--browse-flake-ref))
     (unless ref

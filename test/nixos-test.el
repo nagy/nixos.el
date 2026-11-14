@@ -2582,5 +2582,26 @@ that names a node carries that node's source."
                           'default)))))
       (kill-buffer displayed)))))
 
+(ert-deftest nixos-flake-overview-revert ()
+  "`revert-buffer' reruns `nixos-flake' on the reference of the buffer.
+`revert-buffer' calls `revert-buffer-function' with two arguments,
+so the refresh must accept them."
+  (let* ((cache (make-hash-table :test 'equal))
+         (node (make-hash-table :test 'equal))
+         (reverted nil)
+         (displayed nil))
+    (puthash "type" "derivation" node)
+    (puthash "packages.x86_64-linux.hello" node cache)
+    (cl-letf (((symbol-function 'pop-to-buffer)
+               (lambda (buf &optional _action) (setq displayed buf) (set-buffer buf)))
+              ((symbol-function 'nixos-flake)
+               (lambda (&optional ref) (setq reverted ref))))
+      (nixos--display-flake-overview "/tmp/ref" cache nil)
+      (with-current-buffer displayed
+        (should (eq revert-buffer-function #'nixos--flake-overview-refresh))
+        (revert-buffer)
+        (should (equal reverted "/tmp/ref")))
+      (kill-buffer displayed))))
+
 (provide 'nixos-test)
 ;;; nixos-test.el ends here

@@ -689,7 +689,10 @@ of every leaf node; `RET`/click opens a node's own detail buffer.
   keymap parented on `nixos-browse-mode-map` whose `RET` is
   `nixos-flake-visit-output`).  It is **not** bookmarkable
   (`bookmark-make-record-function` nil) and its `revert-buffer-function`
-  re-runs `nixos-flake` on the ref.  Each node line is an
+  re-runs `nixos-flake` on the ref.  `revert-buffer` calls a
+  `revert-buffer-function` with two arguments, so a refresh function
+  takes `&rest _ignored`, as `nixos-browse-refresh` and
+  `nixos--browse-table-revert` do.  Each node line is an
   `insert-text-button` carrying the node path as `button-data`.
 
   The flake-level fields and the node list are right-aligned to the
