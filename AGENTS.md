@@ -858,6 +858,27 @@ command exits non-zero.  Use a temp file for stderr instead:
     (delete-file stderr-file)))
 ```
 
+### Path display
+
+`nixos--display-path` is the one path that a body line shows.  It
+abbreviates a local path through `nixos--abbreviate-path`, so a rule
+matches the `~/...` text that the reader sees, and then sends the
+result through `tired-shorten-path` when tired is loaded.  That
+function applies `tired-shorthand-rules`, so the rule that a reader
+sets for a Dired link target reaches a store path, a flake `Path:`
+field, a `Flake:` reference, an input source and a `Position:` value.
+Tired stays optional: the helper guards on `fboundp`, the package
+declares the function, and nothing loads tired.
+
+The result is display text alone.  `nixos--browse-out-path`,
+`nixos--browse-name`, the bookmarks, `nixos-browse-copy-out-path` and
+`nixos--store-path-face` keep the real path, so a shortened value
+never reaches the file system.  A button label shortens while its
+action closes over the real string, as the `Position:` field does.
+A Title section and a buffer name keep the plain abbreviation, because
+a rule must not rename a buffer, and the buffer name is the identity
+of a flake ref.
+
 ### Package display layout
 
 `nixos--field` and `nixos--link` open one `nixos-field` section per
@@ -867,8 +888,9 @@ columns).  A caller that needs a wider column passes the width, as
 
 Store paths are face-colored by on-disk status through
 `nixos--store-path-face`: `dired-directory` (exists, is a dir),
-default (exists, is a file), `error` (missing / GC'd).  Homepage URLs
-use the `link` face.
+default (exists, is a file), `error` (missing / GC'd).  The face
+reads the real path, and the printed value goes through
+`nixos--display-path` first.  Homepage URLs use the `link` face.
 
 Build and native build inputs are two sections, each inserted by its
 own function, with clickable package names and store paths aligned to
@@ -913,6 +935,7 @@ promises that the same arguments always give the same value.
 | nix (CLI) | soft (guarded) | `nix-executable` (from nix-mode) for `nix flake show --json`; `nixos--call-flake-show` guards on `boundp` + `stringp` |
 | org-mode | soft | `ol-nixos.el` Org link types (opt-in `(require 'ol-nixos)`) |
 | evil | soft | `evil-nixos.el` bindings (opt-in `(require 'evil-nixos)`) |
+| tired | soft (guarded) | `tired-shorten-path` applies the reader's `tired-shorthand-rules` to a printed path; `nixos--display-path` guards on `fboundp` |
 | embark | soft | export + actions |
 
 ### Faces

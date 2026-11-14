@@ -86,6 +86,8 @@
 (defvar nix-instantiate-executable)
 (defvar nix-executable)
 (declare-function display-buffer-other-window "window")
+;; Tired is optional: `nixos--display-path' guards on `fboundp'.
+(declare-function tired-shorten-path "tired-core")
 
 (defgroup nixos nil
   "Browse NixOS options and packages."
@@ -778,7 +780,8 @@ flake holds one section per output and the menu would flood."
     (when out-path
       (nixos--field "Store path:"
                     (nixos--propertize
-                     out-path (nixos--store-path-face out-path)))
+                     (nixos--display-path out-path)
+                     (nixos--store-path-face out-path)))
       (when (and (null nixos--browse-source) (file-directory-p out-path))
         (setq default-directory (file-name-as-directory out-path))))
     (when meta
@@ -802,7 +805,7 @@ flake holds one section per output and the menu would flood."
           (insert (nixos--propertize (nixos--field-label "Position:")
                                      'nixos-field-label)
                   "\n")
-          (insert-text-button position
+          (insert-text-button (nixos--display-path position)
                               'action (lambda (_) (find-file-at-point position))
                               'follow-link t
                               'help-echo (format "Visit source: %s" position))
@@ -867,7 +870,8 @@ sections line up."
                                (+ (- width (string-width dep-name)) 2)
                                ?\s))
                       (insert (nixos--propertize
-                               dep-store (nixos--store-path-face dep-store)))))
+                               (nixos--display-path dep-store)
+                               (nixos--store-path-face dep-store)))))
                 (insert "???")))
             (insert "\n")))))))
 
@@ -901,7 +905,7 @@ sections line up."
       (when (and desc (not (eq desc :null)) (not (string-empty-p desc)))
         (nixos--field "Description:" desc 'nixos-description)))
     (when ref
-      (nixos--field "Flake:" (nixos--abbreviate-path ref)))))
+      (nixos--field "Flake:" (nixos--display-path ref)))))
 
 
 ;;; Flake overview sections
@@ -1373,21 +1377,21 @@ official `nix flake metadata' input tree."
                   (format "github:%s/%s/%s" owner repo rev))
                  ((stringp url)
                   ;; Local file/path inputs: strip a file:// prefix and
-                  ;; abbreviate the resulting filesystem path (~).
+                  ;; hand the filesystem path to `nixos--display-path'.
                   (if (string-prefix-p "file://" url)
-                      (abbreviate-file-name
-                       (url-unhex-string (substring url 7)))
+                      (url-unhex-string (substring url 7))
                     url))
                  (t nil))))
       (when src
-        (if (and last (not (eq last :null)))
-            (concat src " ("
-                    (nixos--propertize
-                     (format-time-string "%Y-%m-%d %H:%M:%S"
-                                         (seconds-to-time last))
-                     'nixos-date)
-                    ")")
-          src)))))
+        (let ((src (nixos--display-path src)))
+          (if (and last (not (eq last :null)))
+              (concat src " ("
+                      (nixos--propertize
+                       (format-time-string "%Y-%m-%d %H:%M:%S"
+                                           (seconds-to-time last))
+                       'nixos-date)
+                      ")")
+            src))))))
 
 (defun nixos--flake-input-tree (nodes root)
   "Return the input tree of NODES rooted at ROOT.
@@ -1450,7 +1454,9 @@ input tree comes from `nixos--flake-inputs', because it folds."
                 (when (and path (not (string-empty-p path)))
                   ;; A flake source path always names a directory, so it
                   ;; takes the Dired face even when it is not on disk.
-                  (cons "Path:" (nixos--propertize path 'dired-directory)))
+                  (cons "Path:" (nixos--propertize
+                                 (nixos--display-path path)
+                                 'dired-directory)))
                 (when (and url (not (string-empty-p url)))
                   (cons "URL:" url))
                 (when (and rev (not (string-empty-p rev)))
@@ -1471,6 +1477,21 @@ through `abbreviate-file-name'; URLs and flake references such as
   (if (and (stringp path) (string-match-p "\\`[/~]" path))
       (abbreviate-file-name path)
     path))
+
+(defun nixos--display-path (path)
+  "Return PATH shortened for display, or PATH unchanged.
+A local absolute path goes through `abbreviate-file-name' first, so a
+shorthand rule matches the text that the reader sees.  When tired is
+loaded, `tired-shorten-path' then applies `tired-shorthand-rules', so
+a rule that a reader sets for a link target reaches a store path too.
+
+The result is display text alone.  A command, a bookmark and every
+`nixos--browse-' local keep the real path, so a shortened value never
+reaches the file system."
+  (let ((path (nixos--abbreviate-path path)))
+    (if (and (stringp path) (fboundp 'tired-shorten-path))
+        (tired-shorten-path path)
+      path)))
 
 (defun nixos--flake-overview-refresh (&rest _ignored)
   "Refresh the flake overview buffer.

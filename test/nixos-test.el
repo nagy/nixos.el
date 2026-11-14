@@ -1979,6 +1979,74 @@ into the matching export while point sits in a table."
           (should (string-match-p "/nix/store/python3" (buffer-string))))
         (kill-buffer browse-buf)))))
 
+(ert-deftest nixos-display-path-shortens-through-tired ()
+  "`nixos--display-path' abbreviates first, then shortens through tired.
+A nil `tired-shorten-path' leaves the abbreviated path alone, and a
+flake reference passes through untouched."
+  (let (seen)
+    (cl-letf (((symbol-function 'tired-shorten-path)
+               (lambda (path) (setq seen path) "short")))
+      (should (equal (nixos--display-path "/nix/store/abc-source") "short"))
+      (should (equal seen "/nix/store/abc-source"))
+      (should (equal (nixos--display-path (expand-file-name "~/x")) "short"))
+      (should (equal seen "~/x"))))
+  (cl-letf (((symbol-function 'tired-shorten-path) nil))
+    (should-not (fboundp 'tired-shorten-path))
+    (should (equal (nixos--display-path "/nix/store/abc-source")
+                   "/nix/store/abc-source"))
+    (should (equal (nixos--display-path "github:owner/repo")
+                   "github:owner/repo"))
+    (should-not (nixos--display-path nil))))
+
+(ert-deftest nixos-display-package-shortens-store-paths ()
+  "A shortened store path shows in the body, and the real path stays.
+Tired is optional, so a stub stands in for `tired-shorten-path'."
+  (let ((meta (make-hash-table :test 'equal))
+        (dep (make-hash-table :test 'equal))
+        (browse-buf nil))
+    (puthash "name" "htop" meta)
+    (puthash "version" "3.0" meta)
+    (puthash "name" "ncurses" dep)
+    (puthash "storePath" "/nix/store/abc-glibc" dep)
+    (let ((info (list (cons 'meta meta)
+                      (cons 'outPath "/nix/store/abc-htop")
+                      (cons 'buildInputs (vector dep)))))
+      (cl-letf (((symbol-function 'pop-to-buffer)
+                 (lambda (buf &optional _action)
+                   (setq browse-buf buf)
+                   (set-buffer buf)))
+                ((symbol-function 'tired-shorten-path)
+                 (lambda (path) (string-remove-prefix "/nix/store/abc-" path))))
+        (nixos--display-package "htop" info)
+        (with-current-buffer browse-buf
+          (should (string-match-p "Store path: +htop" (buffer-string)))
+          (should (string-match-p "glibc" (buffer-string)))
+          (should-not (string-match-p "/nix/store/" (buffer-string)))
+          (should (equal nixos--browse-out-path "/nix/store/abc-htop")))
+        (kill-buffer browse-buf)))))
+
+(ert-deftest nixos-flake-metadata-shortens-the-source-path ()
+  "The `Path:' field shortens, and the metadata keeps the real path."
+  (let ((meta (make-hash-table :test 'equal)))
+    (puthash "path" "/nix/store/abc-source" meta)
+    (cl-letf (((symbol-function 'tired-shorten-path)
+               (lambda (path) (string-remove-prefix "/nix/store/abc-" path))))
+      (let ((fields (nixos--flake-metadata-fields meta)))
+        (should (equal (cdr (assoc "Path:" fields)) "source"))))
+    (should (equal (gethash "path" meta) "/nix/store/abc-source"))))
+
+(ert-deftest nixos-flake-input-source-shortens-a-local-path ()
+  "A local input source shortens for display, and the node keeps the URL."
+  (let ((node (make-hash-table :test 'equal))
+        (locked (make-hash-table :test 'equal)))
+    (puthash "type" "path" locked)
+    (puthash "url" "file:///nix/store/abc-source" locked)
+    (puthash "locked" locked node)
+    (cl-letf (((symbol-function 'tired-shorten-path)
+               (lambda (path) (string-remove-prefix "/nix/store/abc-" path))))
+      (should (equal (nixos--flake-input-source node) "source")))
+    (should (equal (gethash "url" locked) "file:///nix/store/abc-source"))))
+
 (ert-deftest nixos-bookmark-url ()
   "Bookmark records for URL packages include the URL state."
   (let ((meta-ht (make-hash-table :test 'equal)))
