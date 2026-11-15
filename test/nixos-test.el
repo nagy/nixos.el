@@ -2006,7 +2006,7 @@ into the matching export while point sits in a table."
 (ert-deftest nixos-display-path-shortens-through-tired ()
   "`nixos--display-path' abbreviates first, then shortens through tired.
 A nil `tired-shorten-path' leaves the abbreviated path alone, and a
-flake reference passes through untouched."
+flake reference expands to its web URL."
   (let (seen)
     (cl-letf (((symbol-function 'tired-shorten-path)
                (lambda (path) (setq seen path) "short")))
@@ -2019,8 +2019,56 @@ flake reference passes through untouched."
     (should (equal (nixos--display-path "/nix/store/abc-source")
                    "/nix/store/abc-source"))
     (should (equal (nixos--display-path "github:owner/repo")
-                   "github:owner/repo"))
+                   "https://github.com/owner/repo"))
     (should-not (nixos--display-path nil))))
+
+(ert-deftest nixos-forge-ref-url-expands-a-known-forge ()
+  "A known forge prefix becomes its web URL, and a pin keeps the commit."
+  (should (equal (nixos--forge-ref-url "github:owner/repo")
+                 "https://github.com/owner/repo"))
+  (should (equal (nixos--forge-ref-url "github:owner/repo/abc123")
+                 "https://github.com/owner/repo/tree/abc123"))
+  (should (equal (nixos--forge-ref-url "gitlab:owner/repo")
+                 "https://gitlab.com/owner/repo"))
+  (should (equal (nixos--forge-ref-url "gitlab:owner/repo/abc123")
+                 "https://gitlab.com/owner/repo/-/tree/abc123"))
+  (should (equal (nixos--forge-ref-url "sourcehut:~owner/repo/abc123")
+                 "https://git.sr.ht/~owner/repo/tree/abc123"))
+  (should-not (nixos--forge-ref-url "git:https://example.com/repo"))
+  (should-not (nixos--forge-ref-url "github:owner"))
+  (should-not (nixos--forge-ref-url "github:owner/repo?dir=sub"))
+  (should-not (nixos--forge-ref-url "/nix/store/abc-source"))
+  (should-not (nixos--forge-ref-url nil)))
+
+(ert-deftest nixos-display-url-applies-the-pretty-printer ()
+  "`nixos--display-url' prefers the pretty printer, and falls back raw."
+  (cl-letf (((symbol-function 'buffer-url-pretty-print)
+             (lambda (url) (string-remove-prefix "https://" url))))
+    (should (equal (nixos--display-url "https://example.com/x") "example.com/x"))
+    (should (equal (nixos--display-url "github:owner/repo")
+                   "github.com/owner/repo")))
+  (cl-letf (((symbol-function 'buffer-url-pretty-print) nil))
+    (should-not (fboundp 'buffer-url-pretty-print))
+    (should (equal (nixos--display-url "https://example.com/x")
+                   "https://example.com/x"))
+    (should-not (nixos--display-url nil))))
+
+(ert-deftest nixos-link-shortens-the-label-keeps-the-url ()
+  "A link label shortens, and the button action keeps the real URL."
+  (let ((browsed nil))
+    (cl-letf (((symbol-function 'buffer-url-pretty-print)
+               (lambda (url) (string-remove-prefix "https://" url)))
+              ((symbol-function 'browse-url) (lambda (url) (setq browsed url))))
+      (with-temp-buffer
+        (nixos--link "Homepage:" "https://example.com/x")
+        (should (string-match-p "example.com/x" (buffer-string)))
+        (should-not (string-match-p "https://" (buffer-string)))
+        (goto-char (point-min))
+        (search-forward "example.com/x")
+        (let ((btn (next-button (point-min))))
+          (should btn)
+          (button-activate btn))
+        (should (equal browsed "https://example.com/x"))))))
 
 (ert-deftest nixos-display-package-shortens-store-paths ()
   "A shortened store path shows in the body, and the real path stays.
@@ -2615,9 +2663,10 @@ that names a node carries that node's source."
     (let ((tree (nixos--flake-inputs meta)))
       (should (equal (mapcar #'car tree) '("crane" "nixpkgs")))
       (should (equal (car tree)
-                     '("crane" "github:ipetkov/crane/abc")))
+                     '("crane" "https://github.com/ipetkov/crane/tree/abc")))
       (let ((nixpkgs-node (cadr tree)))
-        (should (equal (cadr nixpkgs-node) "github:NixOS/nixpkgs/def"))
+        (should (equal (cadr nixpkgs-node)
+                       "https://github.com/NixOS/nixpkgs/tree/def"))
         (should (equal (cddr nixpkgs-node)
                        '(("flake-utils" follows "flake-utils"))))))))
 

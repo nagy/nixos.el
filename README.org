@@ -70,6 +70,35 @@ The hooks are =nixos-option-sections-hook=,
 =nixos-flake-overview-sections-hook=.  A refresh keeps the folded
 sections and the line of point.
 
+* Short display
+
+The buffers shorten a long path and a long URL.  Both shortenings are
+optional, and each one comes from another package.
+
+A store path, a flake =Path:= and a source position go through
+=tired-shorten-path= when the tired package is loaded.  Then a rule
+in =tired-shorthand-rules= reaches the text in a detail buffer.
+
+A URL and a forge flake reference go through =buffer-url-pretty-print=
+when [[https://github.com/nagy/emacs-buffer-url][buffer-url]] is loaded.  Then a rule in =buffer-url-shorten-alist=
+replaces a host name:
+
+#+begin_src emacs-lisp
+  (setopt buffer-url-shorten-alist
+          '(("github.com/nagy/" . "nagy/")))
+#+end_src
+
+A =Homepage:= link, a flake =URL:= field, a =Flake:= reference and an
+input source then show the short label.  The button action keeps the
+real URL.
+
+A forge reference expands first.  =github:owner/repo/rev= becomes
+=https://github.com/owner/repo/tree/rev=, and GitLab and sourcehut
+follow.  A reference with an unknown prefix stays as written.
+
+Neither package is a dependency.  The buffers work without them and
+show the full value.
+
 * Evil
 
 Opt in with:

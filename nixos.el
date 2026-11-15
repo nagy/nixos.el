@@ -86,8 +86,10 @@
 (defvar nix-instantiate-executable)
 (defvar nix-executable)
 (declare-function display-buffer-other-window "window")
-;; Tired is optional: `nixos--display-path' guards on `fboundp'.
+;; Tired and buffer-url are optional: `nixos--display-path' and
+;; `nixos--display-url' guard on `fboundp'.
 (declare-function tired-shorten-path "tired-core")
+(declare-function buffer-url-pretty-print "buffer-url")
 
 (defgroup nixos nil
   "Browse NixOS options and packages."
@@ -911,7 +913,7 @@ sections line up."
       (when (and desc (not (eq desc :null)) (not (string-empty-p desc)))
         (nixos--field "Description:" desc 'nixos-description)))
     (when ref
-      (nixos--field "Flake:" (nixos--display-path ref)))))
+      (nixos--field "Flake:" (nixos--display-url ref)))))
 
 
 ;;; Flake overview sections
@@ -933,7 +935,7 @@ plus one space, so every value starts on the same column."
                          (nixos--propertize (nixos--field-label "Flake:" width)
                                             'nixos-field-label)
                          (nixos--propertize
-                          (nixos--abbreviate-path (plist-get data :ref))
+                          (nixos--display-url (plist-get data :ref))
                           'nixos-package-name))
     (dolist (field fields)
       (nixos--field (car field) (cdr field) nil width))))
@@ -1164,7 +1166,8 @@ as its value, so a render keeps point on the field and
   (magit-insert-section (nixos-field (nixos--field-key label))
     (insert (nixos--propertize (nixos--field-label label) 'nixos-field-label))
     (when url
-      (insert-text-button url
+      ;; The label shortens, the action keeps the real URL.
+      (insert-text-button (nixos--display-url url)
                           'action (lambda (_) (browse-url url))
                           'follow-link t
                           'help-echo (format "Browse %s" url)))
@@ -1464,7 +1467,7 @@ input tree comes from `nixos--flake-inputs', because it folds."
                                  (nixos--display-path path)
                                  'dired-directory)))
                 (when (and url (not (string-empty-p url)))
-                  (cons "URL:" url))
+                  (cons "URL:" (nixos--display-url url)))
                 (when (and rev (not (string-empty-p rev)))
                   (cons "Revision:"
                         (nixos--propertize rev 'nixos-revision)))
@@ -1484,9 +1487,53 @@ through `abbreviate-file-name'; URLs and flake references such as
       (abbreviate-file-name path)
     path))
 
+(defconst nixos--flake-forge-hosts
+  '(("github" . "https://github.com")
+    ("gitlab" . "https://gitlab.com")
+    ("sourcehut" . "https://git.sr.ht"))
+  "Forge prefixes of a flake reference, as (NAME . HOST) conses.")
+
+(defun nixos--forge-ref-url (ref)
+  "Return the web URL of flake reference REF, or nil.
+REF names an input, as `github:OWNER/REPO', with an optional pinned
+REV as a third path segment.  GitHub, GitLab and sourcehut expand,
+and a pin points at the commit page of its forge.  A REF with another
+prefix, a query, or a wrong shape returns nil, so the caller keeps the
+literal reference."
+  (when (and (stringp ref) (not (string-search "?" ref)))
+    (let* ((colon (string-search ":" ref))
+           (forge (and colon (substring ref 0 colon)))
+           (host (cdr (assoc forge nixos--flake-forge-hosts)))
+           (parts (and colon (split-string (substring ref (1+ colon)) "/"))))
+      (when (and host
+                 (memq (length parts) '(2 3))
+                 (not (cl-some #'string-empty-p parts)))
+        (let ((owner (nth 0 parts))
+              (repo (nth 1 parts))
+              (rev (nth 2 parts))
+              (tree (if (equal forge "gitlab") "-/tree/" "tree/")))
+          (if rev
+              (format "%s/%s/%s/%s%s" host owner repo tree rev)
+            (format "%s/%s/%s" host owner repo)))))))
+
+(defun nixos--display-url (url)
+  "Return URL shortened for display, or URL unchanged.
+A forge flake reference becomes its web URL first.  When buffer-url is
+loaded, `buffer-url-pretty-print' then applies
+`buffer-url-shorten-alist', so a reader sees the short label of a host.
+
+The result is display text alone.  A button action, a command and
+every `nixos--browse-' local keep the real URL, so a shortened value
+never reaches `browse-url'."
+  (let ((url (or (nixos--forge-ref-url url) url)))
+    (if (and (stringp url) (fboundp 'buffer-url-pretty-print))
+        (buffer-url-pretty-print url)
+      url)))
+
 (defun nixos--display-path (path)
   "Return PATH shortened for display, or PATH unchanged.
-A local absolute path goes through `abbreviate-file-name' first, so a
+A URL and a forge flake reference go through `nixos--display-url'.  A
+local absolute path goes through `abbreviate-file-name' first, so a
 shorthand rule matches the text that the reader sees.  When tired is
 loaded, `tired-shorten-path' then applies `tired-shorthand-rules', so
 a rule that a reader sets for a link target reaches a store path too.
@@ -1494,10 +1541,15 @@ a rule that a reader sets for a link target reaches a store path too.
 The result is display text alone.  A command, a bookmark and every
 `nixos--browse-' local keep the real path, so a shortened value never
 reaches the file system."
-  (let ((path (nixos--abbreviate-path path)))
-    (if (and (stringp path) (fboundp 'tired-shorten-path))
-        (tired-shorten-path path)
-      path)))
+  (cond
+   ((and (stringp path) (string-match-p "\\`https?://" path))
+    (nixos--display-url path))
+   ((nixos--forge-ref-url path) (nixos--display-url path))
+   (t
+    (let ((path (nixos--abbreviate-path path)))
+      (if (and (stringp path) (fboundp 'tired-shorten-path))
+          (tired-shorten-path path)
+        path)))))
 
 (defun nixos--flake-overview-refresh (&rest _ignored)
   "Refresh the flake overview buffer.

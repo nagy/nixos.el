@@ -38,7 +38,7 @@ config, which hits the binary cache).
 
 ## Architecture
 
-### nixos.el (core, ~2760 lines)
+### nixos.el (core, ~2890 lines)
 
 1. Faces (`nixos-package-name`, `nixos-field-label`, `nixos-description`,
    `nixos-version`, `nixos-date`, `nixos-revision`)
@@ -56,8 +56,9 @@ config, which hits the binary cache).
 7. Sections (the four `nixos-*-sections-hook` defcustoms, the inserters
    `nixos-insert-*`, `nixos--render`, `nixos--browse-imenu-index`) and
    Point keeping
-8. Display helpers (`nixos--field`, `nixos--link`, `nixos--display-option`,
-   `nixos--display-package`, `nixos--display-flake`,
+8. Display helpers (`nixos--field`, `nixos--link`, `nixos--display-package`,
+   `nixos--display-option`, `nixos--forge-ref-url`, `nixos--display-url`,
+   `nixos--display-path`, `nixos--display-flake`,
    `nixos--display-flake-overview`)
 9. Bookmarks (detail + table)
 10. Interactive commands (`nixos-package` / `nixos-package-local` /
@@ -888,9 +889,38 @@ The result is display text alone.  `nixos--browse-out-path`,
 `nixos--store-path-face` keep the real path, so a shortened value
 never reaches the file system.  A button label shortens while its
 action closes over the real string, as the `Position:` field does.
-A Title section and a buffer name keep the plain abbreviation, because
-a rule must not rename a buffer, and the buffer name is the identity
-of a flake ref.
+A buffer name keeps the plain abbreviation, because a rule must not
+rename a buffer, and the buffer name is the identity of a flake ref.
+A Title section holds display text, so it follows the rules below.
+
+A URL and a forge flake reference do not take this path: they go to
+`nixos--display-url` first.
+
+### URL display
+
+`nixos--display-url` is the one URL that a body line shows.  It
+first expands a forge flake reference through `nixos--forge-ref-url`,
+then sends the result through `buffer-url-pretty-print` when
+buffer-url is loaded.  That function strips the `https://` prefix and
+applies `buffer-url-shorten-alist`, so a host name shows as the short
+label that a reader sets.  Buffer-url stays optional: the helper
+guards on `fboundp`, the package declares the function, and nothing
+loads buffer-url.
+
+`nixos--forge-ref-url` maps a `TYPE:OWNER/REPO[/REV]` reference to its
+web URL for GitHub, GitLab and sourcehut.  A pin becomes the commit
+page of its forge (`/tree/REV`, and `/-/tree/REV` for GitLab), so the
+URL resolves.  A reference with another prefix, with a query, or with
+a wrong shape returns nil, and the literal reference stays.
+
+The helper covers the `Homepage:` link, the flake `URL:` field, a
+`Flake:` reference, a Title section and every input source.  A link
+label shortens while its `browse-url` action closes over the real
+URL, exactly as a path button does.
+
+A URL inside a description, an example value or a flake description
+stays out: `goto-address-mode` turns that text into an overlay, and
+the buffer text stays plain.
 
 ### Package display layout
 
@@ -949,6 +979,7 @@ promises that the same arguments always give the same value.
 | org-mode | soft | `ol-nixos.el` Org link types (opt-in `(require 'ol-nixos)`) |
 | evil | soft | `evil-nixos.el` bindings (opt-in `(require 'evil-nixos)`) |
 | tired | soft (guarded) | `tired-shorten-path` applies the reader's `tired-shorthand-rules` to a printed path; `nixos--display-path` guards on `fboundp` |
+| buffer-url | soft (guarded) | `buffer-url-pretty-print` applies the reader's `buffer-url-shorten-alist` to a printed URL; `nixos--display-url` guards on `fboundp` |
 | embark | soft | export + actions |
 
 ### Faces
