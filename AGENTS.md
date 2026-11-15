@@ -966,8 +966,12 @@ That helper names the face in both the `face` and the `font-lock-face`
 property, so the paint survives the fontification of a detail buffer.
 A propertized string passed to
 `magit-insert-heading` keeps its face, because Magit inserts a heading
-that already carries one unchanged.  `nixos-version`, `nixos-license`
-and `nixos-revision` inherit from `shadow`, a plain built-in.
+that already carries one unchanged.  `nixos-license` and
+`nixos-revision` inherit from `shadow`, a plain built-in, and
+`nixos-version` inherits `magit-tag` alone.  `magit-tag` lives in
+`magit.el` and not in `magit-section.el`, so the version reads as
+default text until a session loads Magit.  Emacs drops an undefined
+parent face without an error.
 `nixos-license` paints the `License:` value of a package buffer.
 `nixos-date` inherits `(org-date shadow)`, so a timestamp in the
 flake input tree looks the same as in an Org buffer and stays muted

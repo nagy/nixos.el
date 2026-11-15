@@ -254,7 +254,7 @@ Inherits from `package-description' when available."
   :group 'nixos)
 
 (defface nixos-version
-  '((t :inherit (shadow)))
+  '((t :inherit (magit-tag)))
   "Face for package versions in nixos detail and table buffers."
   :group 'nixos)
 
