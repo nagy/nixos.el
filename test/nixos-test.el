@@ -1979,6 +1979,30 @@ into the matching export while point sits in a table."
           (should (string-match-p "/nix/store/python3" (buffer-string))))
         (kill-buffer browse-buf)))))
 
+(ert-deftest nixos-display-package-license-face ()
+  "The license value carries the `nixos-license' face."
+  (let ((meta (make-hash-table :test 'equal))
+        (license (make-hash-table :test 'equal))
+        (browse-buf nil))
+    (puthash "name" "htop" meta)
+    (puthash "fullName" "GNU General Public License v2.0 only" license)
+    (puthash "license" license meta)
+    (let ((info (list (cons 'meta meta)
+                      (cons 'outPath "/nix/store/htop"))))
+      (cl-letf (((symbol-function 'pop-to-buffer)
+                 (lambda (buf &optional _action)
+                   (setq browse-buf buf)
+                   (set-buffer buf))))
+        (nixos--display-package "htop" info)
+        (with-current-buffer browse-buf
+          (goto-char (point-min))
+          (should (search-forward "GNU General Public License" nil t))
+          (should (eq (get-text-property (match-beginning 0) 'face)
+                      'nixos-license))
+          (should (eq (get-text-property (match-beginning 0) 'font-lock-face)
+                      'nixos-license)))
+        (kill-buffer browse-buf)))))
+
 (ert-deftest nixos-display-path-shortens-through-tired ()
   "`nixos--display-path' abbreviates first, then shortens through tired.
 A nil `tired-shorten-path' leaves the abbreviated path alone, and a

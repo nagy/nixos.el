@@ -258,6 +258,11 @@ Inherits from `package-description' when available."
   "Face for package versions in nixos detail and table buffers."
   :group 'nixos)
 
+(defface nixos-license
+  '((t :inherit (shadow)))
+  "Face for licenses in nixos detail buffers."
+  :group 'nixos)
+
 (defface nixos-date
   '((t :inherit (org-date shadow)))
   "Face for the date part of timestamps in nixos detail buffers.
@@ -812,7 +817,8 @@ flake holds one section per output and the menu would flood."
           (insert "\n")))
       (let ((license (gethash "license" meta)))
         (when license
-          (nixos--field "License:" (nixos--license-string license)))))))
+          (nixos--field "License:" (nixos--license-string license)
+                        'nixos-license))))))
 
 (defun nixos-insert-package-maintainers ()
   "Insert the Maintainers section of a package buffer."
