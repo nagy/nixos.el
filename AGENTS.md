@@ -884,14 +884,19 @@ field, a `Flake:` reference, an input source and a `Position:` value.
 Tired stays optional: the helper guards on `fboundp`, the package
 declares the function, and nothing loads tired.
 
-The result is display text alone.  `nixos--browse-out-path`,
-`nixos--browse-name`, the bookmarks, `nixos-browse-copy-out-path` and
-`nixos--store-path-face` keep the real path, so a shortened value
-never reaches the file system.  A button label shortens while its
-action closes over the real string, as the `Position:` field does.
-A buffer name keeps the plain abbreviation, because a rule must not
-rename a buffer, and the buffer name is the identity of a flake ref.
-A Title section holds display text, so it follows the rules below.
+The result is display text alone, and the `nixos-path' text property
+names the real path.  `nixos--browse-out-path`, `nixos--browse-name`,
+the bookmarks, `nixos-browse-copy-out-path` and `nixos--store-path-face`
+keep the real path too, so a shortened value never reaches the file
+system.  A button label shortens while its action closes over the real
+string, as the `Position:` field does.  A buffer name keeps the plain
+abbreviation, because a rule must not rename a buffer, and the buffer
+name is the identity of a flake ref.  A Title section holds display
+text, so it follows the rules below.
+
+`nixos--display-position` paints a `Position:` value and points its
+`nixos-path' property at the file alone, with no `:LINE' suffix, so a
+file action reaches the file and not the line number.
 
 A URL and a forge flake reference do not take this path: they go to
 `nixos--display-url` first.
@@ -921,6 +926,33 @@ URL, exactly as a path button does.
 A URL inside a description, an example value or a flake description
 stays out: `goto-address-mode` turns that text into an overlay, and
 the buffer text stays plain.
+
+### Thing at point and Embark
+
+A shortened line defeats the readers that parse the buffer text.
+`ffap-file-at-point' finds no file in a short label, and the URL
+regexp of `thingatpt' needs a scheme that `buffer-url-pretty-print'
+strips.  The display helpers therefore keep the real value in a text
+property: `nixos-path' for a path and `nixos-url' for a URL.
+
+`nixos-browse-mode' appends two providers to
+`thing-at-point-provider-alist`: `nixos--url-at-point` reads
+`nixos-url' and `nixos--path-at-point` reads `nixos-path'.  A provider
+returns nil when the property is absent, so the builtin search of
+`thingatpt' still runs.
+
+A `file` target still needs `nixos--embark-target-file-at-point`.
+The finder of Embark asks `ffap-file-at-point' about the buffer text,
+so the real path in the property never reaches it.  Our finder returns
+`(file PATH BEG . END)' from the property, and nil in every buffer
+without one.  `with-eval-after-load 'embark'` adds it to
+`embark-target-finders`, where `add-hook' puts it before the builtin
+finders.  A `url` target needs no finder, because Embark reads the
+URL through `thing-at-point' and the bounds through
+`thing-at-point-bounds-of-url-at-point'.
+
+Never read the real value from the buffer text in a new reader.
+Read the property, or call the helper that the property comes from.
 
 ### Package display layout
 

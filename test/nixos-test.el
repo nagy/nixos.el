@@ -2053,6 +2053,68 @@ flake reference expands to its web URL."
                    "https://example.com/x"))
     (should-not (nixos--display-url nil))))
 
+(ert-deftest nixos-display-url-keeps-the-real-url-in-a-property ()
+  "A shortened URL carries the real URL in a text property."
+  (cl-letf (((symbol-function 'buffer-url-pretty-print)
+             (lambda (url) (string-remove-prefix "https://" url))))
+    (let ((text (nixos--display-url "https://example.com/x")))
+      (should (equal text "example.com/x"))
+      (should (equal (get-text-property 0 'nixos-url text)
+                     "https://example.com/x"))))
+  (should-not (fboundp 'buffer-url-pretty-print))
+  (let ((text (nixos--display-url "github:owner/repo")))
+    (should (equal text "https://github.com/owner/repo"))
+    (should-not (get-text-property 0 'nixos-url text))))
+
+(ert-deftest nixos-display-path-keeps-the-real-path-in-a-property ()
+  "A shortened path carries the real path in a text property."
+  (cl-letf (((symbol-function 'tired-shorten-path) #'file-name-nondirectory))
+    (let ((text (nixos--display-path "/nix/store/abc-htop")))
+      (should (equal text "abc-htop"))
+      (should (equal (get-text-property 0 'nixos-path text)
+                     "/nix/store/abc-htop")))))
+
+(ert-deftest nixos-display-position-names-the-file-alone ()
+  "A position line covers the whole value, and its path names the file."
+  (let ((text (nixos--display-position
+               "/nix/store/abc-source/pkg/default.nix:12:3")))
+    (should (equal text "/nix/store/abc-source/pkg/default.nix:12:3"))
+    (should (equal (get-text-property 0 'nixos-path text)
+                   "/nix/store/abc-source/pkg/default.nix"))))
+
+(ert-deftest nixos-browse-mode-provides-thing-at-point ()
+  "`thing-at-point' reaches the real URL and the real path."
+  (cl-letf (((symbol-function 'buffer-url-pretty-print)
+             (lambda (url) (string-remove-prefix "https://" url)))
+            ((symbol-function 'tired-shorten-path) #'file-name-nondirectory))
+    (with-temp-buffer
+      (insert "Homepage: " (nixos--display-url "https://example.com/x")
+              "\nStore path: " (nixos--display-path "/nix/store/abc-htop")
+              "\n")
+      (nixos-browse-mode)
+      (goto-char (point-min))
+      (search-forward "example.com/x")
+      (goto-char (match-beginning 0))
+      (should (equal (thing-at-point 'url) "https://example.com/x"))
+      (search-forward "abc-htop")
+      (goto-char (match-beginning 0))
+      (should (equal (thing-at-point 'filename) "/nix/store/abc-htop")))))
+
+(ert-deftest nixos-embark-target-file-finder ()
+  "The finder targets the real path, and stays quiet on plain text."
+  (cl-letf (((symbol-function 'tired-shorten-path) #'file-name-nondirectory))
+    (with-temp-buffer
+      (insert (nixos--display-path "/nix/store/abc-htop"))
+      (goto-char (point-min))
+      (let ((target (nixos--embark-target-file-at-point)))
+        (should (eq (car target) 'file))
+        (should (equal (cadr target) "/nix/store/abc-htop"))
+        (should (equal (cddr target) (cons (point-min) (point-max)))))))
+  (with-temp-buffer
+    (insert "plain text")
+    (goto-char (point-min))
+    (should-not (nixos--embark-target-file-at-point))))
+
 (ert-deftest nixos-link-shortens-the-label-keeps-the-url ()
   "A link label shortens, and the button action keeps the real URL."
   (let ((browsed nil))

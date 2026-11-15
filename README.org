@@ -99,6 +99,11 @@ follow.  A reference with an unknown prefix stays as written.
 Neither package is a dependency.  The buffers work without them and
 show the full value.
 
+The buffer text keeps the real value in a text property, so
+=thing-at-point= and Embark still see the full path and the full URL.
+An Embark file action on a shortened store path opens the real store
+path.
+
 * Evil
 
 Opt in with:

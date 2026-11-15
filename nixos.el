@@ -563,6 +563,13 @@ see `nixos-option-sections-hook'."
   ;; ends with a colon: `magit-insert-child-count' rewrites such a
   ;; heading after its children have recorded their positions.
   (setq-local magit-section-inhibit-markers t)
+  ;; A display line can shorten a path or a URL, so a text property
+  ;; keeps the real value.  `thing-at-point' reads that property
+  ;; through the providers, and so does an Embark target finder.
+  (setq-local thing-at-point-provider-alist
+              (append '((url . nixos--url-at-point)
+                        (filename . nixos--path-at-point))
+                      thing-at-point-provider-alist))
   ;; A description, an example and a flake description can hold a URL.
   ;; `goto-address-mode' marks it with an overlay, so the text of the
   ;; buffer stays plain and the URL opens with its own keys.
@@ -812,7 +819,7 @@ flake holds one section per output and the menu would flood."
           (insert (nixos--propertize (nixos--field-label "Position:")
                                      'nixos-field-label)
                   "\n")
-          (insert-text-button (nixos--display-path position)
+          (insert-text-button (nixos--display-position position)
                               'action (lambda (_) (find-file-at-point position))
                               'follow-link t
                               'help-echo (format "Visit source: %s" position))
@@ -1522,13 +1529,16 @@ A forge flake reference becomes its web URL first.  When buffer-url is
 loaded, `buffer-url-pretty-print' then applies
 `buffer-url-shorten-alist', so a reader sees the short label of a host.
 
-The result is display text alone.  A button action, a command and
-every `nixos--browse-' local keep the real URL, so a shortened value
+The result is display text alone, and the `nixos-url' text property
+names the real URL.  A button action, a command and every
+`nixos--browse-' local keep the real URL too, so a shortened value
 never reaches `browse-url'."
-  (let ((url (or (nixos--forge-ref-url url) url)))
-    (if (and (stringp url) (fboundp 'buffer-url-pretty-print))
-        (buffer-url-pretty-print url)
-      url)))
+  (let ((real (or (nixos--forge-ref-url url) url)))
+    (cond
+     ((not (stringp real)) real)
+     ((fboundp 'buffer-url-pretty-print)
+      (propertize (buffer-url-pretty-print real) 'nixos-url real))
+     (t real))))
 
 (defun nixos--display-path (path)
   "Return PATH shortened for display, or PATH unchanged.
@@ -1538,18 +1548,54 @@ shorthand rule matches the text that the reader sees.  When tired is
 loaded, `tired-shorten-path' then applies `tired-shorthand-rules', so
 a rule that a reader sets for a link target reaches a store path too.
 
-The result is display text alone.  A command, a bookmark and every
-`nixos--browse-' local keep the real path, so a shortened value never
-reaches the file system."
+The result is display text alone, and the `nixos-path' text property
+names the real path.  A command, a bookmark and every `nixos--browse-'
+local keep the real path too, so a shortened value never reaches the
+file system."
   (cond
    ((and (stringp path) (string-match-p "\\`https?://" path))
     (nixos--display-url path))
    ((nixos--forge-ref-url path) (nixos--display-url path))
+   ((not (stringp path)) path)
    (t
-    (let ((path (nixos--abbreviate-path path)))
-      (if (and (stringp path) (fboundp 'tired-shorten-path))
-          (tired-shorten-path path)
-        path)))))
+    (let ((abbreviated (nixos--abbreviate-path path)))
+      (propertize (if (fboundp 'tired-shorten-path)
+                      (tired-shorten-path abbreviated)
+                    abbreviated)
+                  'nixos-path path)))))
+
+(defun nixos--position-file (position)
+  "Return the file that POSITION names, or POSITION itself.
+POSITION is a `FILE:LINE[:COLUMN]' string from `meta.position'."
+  (if (and (stringp position)
+           (string-match "\\`\\(.+?\\):[0-9]+\\(?::[0-9]+\\)?\\'" position))
+      (match-string 1 position)
+    position))
+
+(defun nixos--display-position (position)
+  "Return POSITION shortened for display, with its file as the path.
+The text covers the whole value, and its `nixos-path' property names
+the file alone, so a file action reaches the file and skips the line
+number."
+  (when-let* ((display (nixos--display-path position)))
+    (add-text-properties 0 (length display)
+                         (list 'nixos-path (nixos--position-file position))
+                         display)
+    display))
+
+(defun nixos--url-at-point ()
+  "Return the real URL of the display text at point, or nil.
+The `nixos-url' text property holds the URL that a shortened label
+stands for.  `thing-at-point-provider-alist' calls this function in a
+browse buffer."
+  (get-text-property (point) 'nixos-url))
+
+(defun nixos--path-at-point ()
+  "Return the real path of the display text at point, or nil.
+The `nixos-path' text property holds the path that a shortened label
+stands for.  `thing-at-point-provider-alist' calls this function in a
+browse buffer."
+  (get-text-property (point) 'nixos-path))
 
 (defun nixos--flake-overview-refresh (&rest _ignored)
   "Refresh the flake overview buffer.
@@ -2838,6 +2884,7 @@ Add this alongside `nixos-thing-at-point-setup' in
 (defvar embark-exporters-alist)
 (defvar embark-keymap-alist)
 (defvar embark-general-map)
+(defvar embark-target-finders)
 
 (defun nixos--embark-export-option (candidates)
   "Export the NixOS option CANDIDATES to a browse table."
@@ -2869,6 +2916,25 @@ The parent is set to `embark-general-map' once Embark loads."
   "b"   #'nixos--embark-browse-package-url
   "i"   #'insert)
 
+(defun nixos--property-bounds (property)
+  "Return the bounds of PROPERTY around point, or nil.
+The bounds cover the display text that carries PROPERTY, the way
+Embark finds the extent of a `shr-url'."
+  (when (get-text-property (point) property)
+    (cons (previous-single-property-change
+           (min (1+ (point)) (point-max)) property nil (point-min))
+          (next-single-property-change (point) property nil (point-max)))))
+
+(defun nixos--embark-target-file-at-point ()
+  "Target the real path of the display text at point.
+`embark-target-file-at-point' asks `ffap-file-at-point' about the
+buffer text, so a shortened path answers nothing.  This finder reads
+the `nixos-path' text property instead, and returns nil outside a
+browse buffer."
+  (when-let* ((path (get-text-property (point) 'nixos-path))
+              (bounds (nixos--property-bounds 'nixos-path)))
+    (cons 'file (cons path bounds))))
+
 (with-eval-after-load 'embark
   ;; `defvar-keymap :parent' is evaluated once, at definition time,
   ;; when `embark-general-map' may not exist yet — wire it up here.
@@ -2881,7 +2947,11 @@ The parent is set to `embark-general-map' once Embark loads."
   (add-to-list 'embark-keymap-alist
                '(nixos-option . nixos-embark-option-map))
   (add-to-list 'embark-keymap-alist
-               '(nixos-package . nixos-embark-package-map)))
+               '(nixos-package . nixos-embark-package-map))
+  ;; A shortened path defeats `ffap-file-at-point', so a finder of our
+  ;; own reads the text property.  It returns nil elsewhere, and it runs
+  ;; before the builtin finders because `add-hook' prepends by default.
+  (add-hook 'embark-target-finders #'nixos--embark-target-file-at-point))
 
 (provide 'nixos)
 ;;; nixos.el ends here
