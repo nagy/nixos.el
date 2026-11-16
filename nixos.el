@@ -2925,6 +2925,19 @@ Embark finds the extent of a `shr-url'."
            (min (1+ (point)) (point-max)) property nil (point-min))
           (next-single-property-change (point) property nil (point-max)))))
 
+(defun nixos--embark-target-url-at-point ()
+  "Target the real URL of the display text at point.
+`embark-target-url-at-point' reads the URL through `thing-at-point'
+and its bounds through `thing-at-point-bounds-of-url-at-point'.  The
+value then comes from the `nixos-url' property while the bounds cover
+whatever the URL regexp matches in the shortened label, so a short
+label gives a span that starts inside the label or holds no text at
+all.  This finder reads the property for both, and returns nil
+outside a browse buffer."
+  (when-let* ((url (get-text-property (point) 'nixos-url))
+              (bounds (nixos--property-bounds 'nixos-url)))
+    (cons 'url (cons url bounds))))
+
 (defun nixos--embark-target-file-at-point ()
   "Target the real path of the display text at point.
 `embark-target-file-at-point' asks `ffap-file-at-point' about the
@@ -2948,10 +2961,12 @@ browse buffer."
                '(nixos-option . nixos-embark-option-map))
   (add-to-list 'embark-keymap-alist
                '(nixos-package . nixos-embark-package-map))
-  ;; A shortened path defeats `ffap-file-at-point', so a finder of our
-  ;; own reads the text property.  It returns nil elsewhere, and it runs
-  ;; before the builtin finders because `add-hook' prepends by default.
-  (add-hook 'embark-target-finders #'nixos--embark-target-file-at-point))
+  ;; A shortened path defeats `ffap-file-at-point' and a shortened URL
+  ;; label defeats the URL regexp, so finders of our own read the text
+  ;; property.  They return nil elsewhere, and they run before the
+  ;; builtin finders because `add-hook' prepends by default.
+  (add-hook 'embark-target-finders #'nixos--embark-target-file-at-point)
+  (add-hook 'embark-target-finders #'nixos--embark-target-url-at-point))
 
 (provide 'nixos)
 ;;; nixos.el ends here

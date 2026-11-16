@@ -2115,6 +2115,25 @@ flake reference expands to its web URL."
     (goto-char (point-min))
     (should-not (nixos--embark-target-file-at-point))))
 
+(ert-deftest nixos-embark-target-url-finder ()
+  "The finder covers the whole shortened label, from any point in it."
+  (cl-letf (((symbol-function 'buffer-url-pretty-print)
+             (lambda (_url) "gh:/nixos/nixpkgs")))
+    (with-temp-buffer
+      (insert (nixos--display-url "https://github.com/nixos/nixpkgs"))
+      (let ((bounds (cons (point-min) (point-max))))
+        (dotimes (offset (- (point-max) (point-min)))
+          (goto-char (+ (point-min) offset))
+          (let ((target (nixos--embark-target-url-at-point)))
+            (should (eq (car target) 'url))
+            (should (equal (cadr target)
+                           "https://github.com/nixos/nixpkgs"))
+            (should (equal (cddr target) bounds)))))))
+  (with-temp-buffer
+    (insert "plain text")
+    (goto-char (point-min))
+    (should-not (nixos--embark-target-url-at-point))))
+
 (ert-deftest nixos-link-shortens-the-label-keeps-the-url ()
   "A link label shortens, and the button action keeps the real URL."
   (let ((browsed nil))

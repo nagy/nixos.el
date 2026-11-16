@@ -941,15 +941,21 @@ property: `nixos-path' for a path and `nixos-url' for a URL.
 returns nil when the property is absent, so the builtin search of
 `thingatpt' still runs.
 
-A `file` target still needs `nixos--embark-target-file-at-point`.
-The finder of Embark asks `ffap-file-at-point' about the buffer text,
-so the real path in the property never reaches it.  Our finder returns
-`(file PATH BEG . END)' from the property, and nil in every buffer
-without one.  `with-eval-after-load 'embark'` adds it to
-`embark-target-finders`, where `add-hook' puts it before the builtin
-finders.  A `url` target needs no finder, because Embark reads the
-URL through `thing-at-point' and the bounds through
-`thing-at-point-bounds-of-url-at-point'.
+Two Embark finders need a text property.  A `file` target needs
+`nixos--embark-target-file-at-point`, because the finder of Embark
+asks `ffap-file-at-point' about the buffer text, so the real path in
+the property never reaches it.  A `url` target needs
+`nixos--embark-target-url-at-point`, because Embark builds that
+target from `thing-at-point-bounds-of-url-at-point' alone.  The
+value then comes from our provider while the bounds cover whatever
+the URL regexp matches in the shortened label: a short label gives
+a span that starts inside the label, and a label that the regexp
+cannot parse gives an empty span.  Both finders return
+`(TYPE VALUE BEG . END)' from `nixos--property-bounds' and nil in
+every buffer without the property.
+`with-eval-after-load 'embark'` adds them to
+`embark-target-finders`, where `add-hook' puts them before the
+builtin finders.
 
 Never read the real value from the buffer text in a new reader.
 Read the property, or call the helper that the property comes from.
