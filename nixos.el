@@ -277,13 +277,10 @@ regular text; the default is a muted `shadow' style."
   :group 'nixos)
 
 (defface nixos-revision
-  '((((background light)) :inherit shadow :foreground "#5c6470")
-    (((background dark))  :inherit shadow :foreground "#a8b0b8")
-    (t :inherit shadow))
+  '((t :inherit (magit-hash)))
   "Face for the revision/hash value in nixos detail buffers.
-Used for the `Revision:' flake field — the commit object name — in the
-spirit of `magit-hash' (face for the commit object name in log output).
-The foreground adapts to the background; customize to taste."
+Inherits from `magit-hash', so the `Revision:' flake field reads like
+the commit object name of a Magit log line."
   :group 'nixos)
 
 

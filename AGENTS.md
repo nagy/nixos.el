@@ -1035,20 +1035,22 @@ That helper names the face in both the `face` and the `font-lock-face`
 property, so the paint survives the fontification of a detail buffer.
 A propertized string passed to
 `magit-insert-heading` keeps its face, because Magit inserts a heading
-that already carries one unchanged.  `nixos-license` and
-`nixos-revision` inherit from `shadow`, a plain built-in, and
-`nixos-version` inherits `magit-tag` alone.  `magit-tag` lives in
-`magit.el` and not in `magit-section.el`, so the version reads as
-default text until a session loads Magit.  Emacs drops an undefined
-parent face without an error.
+that already carries one unchanged.  `nixos-license` inherits from
+`shadow`, a plain built-in, and `nixos-version` inherits `magit-tag`
+alone.  `magit-tag` lives in `magit.el` and not in
+`magit-section.el`, so the version reads as default text until a
+session loads Magit.  Emacs drops an undefined parent face without an
+error.
 `nixos-license` paints the `License:` value of a package buffer.
 `nixos-date` inherits `(org-date shadow)`, so a timestamp in the
 flake input tree looks the same as in an Org buffer and stays muted
 when Org does not define its face.
-`nixos-revision` inherits `shadow` too with a background-adapting
-foreground (light/dark) for the `Revision:` flake hash, in the spirit
-of `magit-hash`.  No `(require 'package)` or `(require 'org)` needed —
-the `:inherit` list resolves left-to-right, skipping undefined faces.
+`nixos-revision` inherits `magit-hash` alone, the face of the commit
+object name in a Magit log line, so the `Revision:` flake hash reads
+in that same colour.  `magit-hash` lives in `magit.el` too, so the
+field shows default text until a session loads Magit.  No
+`(require 'package)` or `(require 'org)` needed — the `:inherit` list
+resolves left-to-right, skipping undefined faces.
 `nixos-date` is applied to the per-input dates of the flake input
 tree and to the `Last modified:` flake field, so every date in a flake
 buffer reads the same.  Do not paint these with `magit-log-date`:
