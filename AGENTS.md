@@ -115,9 +115,6 @@ marks it with an overlay.
   heading after its children recorded their positions, and that shifts the
   positions.  Write the count into the heading text before the children
   exist.
-- Keep the `checks.lint` output empty.  checkdoc and package-lint fail the
-  build on any finding.
-
 ## Conventions
 
 - Follow checkdoc: an imperative summary under 80 columns, the body on the
