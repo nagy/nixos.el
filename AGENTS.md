@@ -23,10 +23,8 @@ live in `README.org`.
 
 ## Build and test
 
-- Run `nix build` before you commit.  It builds the package, byte-compiles
-  with warnings as errors and runs the whole ERT suite.
-- Run `nix flake check` for `checks.lint` (checkdoc and package-lint) and
-  `checks.treefmt`.  It evaluates the package but does not build it.
+- Run `nix build` before you commit.
+- Run `nix flake check`.  It evaluates the package but does not build it.
 - Run `nix fmt` after an edit.  It runs treefmt through the flake.  Do not
   run `nixfmt` alone.
 - Run one suite in the shell with `emacs --batch -L . -L test -l
