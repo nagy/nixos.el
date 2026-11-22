@@ -2277,14 +2277,16 @@ after one that has a version.  Fall back to `string<' when
 for every entry.  Group header lines bypass it and stay plain.  The
 whole row explains the mouse, and the name cell carries
 `mouse-face', so the pointer highlights the name alone.  ID is nil
-on a row without an entry, and such a row gets no properties."
+on a row without an entry, and such a row gets no properties.  The
+span of the name counts characters, because a buffer position does,
+and not display columns."
   (let ((beg (point)))
     (tabulated-list-print-entry id columns)
     (when id
       (let* ((end (1- (point)))
              (text (nixos--browse-table-cell-text (aref columns 0)))
              (name-start (+ beg tabulated-list-padding))
-             (name-end (min (+ name-start (string-width text)) end)))
+             (name-end (min (+ name-start (length text)) end)))
         (add-text-properties beg end
                              (list 'help-echo
                                    nixos--browse-table-mouse-help))

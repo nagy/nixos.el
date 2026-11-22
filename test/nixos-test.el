@@ -1427,6 +1427,26 @@ so a posn reads the row."
       (should-not (get-text-property (+ name-start (length "boot.a.enable"))
                                      'mouse-face)))))
 
+(ert-deftest nixos-browse-table-print-entry-wide-name ()
+  "The name-only `mouse-face' spans the characters of a wide name.
+A buffer position counts characters and a display column counts
+width, so the span must not reach into the blank padding."
+  (nixos-test--with-packages
+      (nixos-test--packages-hash
+       '("legacyPackages.x86_64-linux.日本"
+         :pname "日本" :version "1.0" :description "wide"))
+    (with-temp-buffer
+      (nixos-browse-packages-mode)
+      (nixos--browse-table-reload)
+      (tabulated-list-print)
+      (goto-char (point-min))
+      (search-forward "日本")
+      (let ((beg (match-beginning 0))
+            (end (match-end 0)))
+        (should (eq (get-text-property beg 'mouse-face) 'highlight))
+        (should (eq (get-text-property (1- end) 'mouse-face) 'highlight))
+        (should-not (get-text-property end 'mouse-face))))))
+
 (ert-deftest nixos-browse-table-click-selects-row ()
   "The follow-link predicate returns nil, so a click does not follow."
   (should-not (nixos--browse-table-click-selects-row)))
