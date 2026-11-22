@@ -29,6 +29,10 @@
 (require 'ol-nixos)
 (require 'ert)
 (require 'cl-lib)
+;; The `ol-nixos' exporters escape a generated link text with the
+;; transcoder of the backend that runs them, which Org loads on demand.
+(require 'ox-html)
+(require 'ox-latex)
 
 (defvar nix-instantiate-executable)
 (defvar nix-executable)
@@ -2441,6 +2445,23 @@ is the only place that names the source."
   "`nixos-org-package-search-export' falls back to plain text."
   (let ((result (nixos-org-package-search-export "htop" nil 'ascii nil)))
     (should (equal result "htop"))))
+
+(ert-deftest nixos-org-package-search-export-html-escapes-the-target ()
+  "A link target that stands in for a description is escaped for HTML."
+  (should (string-match-p
+           ">a_b &amp; &lt;c&gt;</a>"
+           (nixos-org-package-search-export "a_b & <c>" nil 'html nil))))
+
+(ert-deftest nixos-org-package-search-export-latex-escapes-the-target ()
+  "A link target that stands in for a description is escaped for LaTeX."
+  (let ((result (nixos-org-package-search-export "a_b & c" nil 'latex nil)))
+    (should (string-search "}{a\\_b \\& c}" result))))
+
+(ert-deftest nixos-org-package-search-export-keeps-a-description-verbatim ()
+  "Org transcodes a description already, so the exporter keeps it."
+  (should (string-match-p
+           ">A &amp; B</a>"
+           (nixos-org-package-search-export "x" "A &amp; B" 'html nil))))
 
 
 ;;; Org option-search link tests

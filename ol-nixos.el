@@ -40,18 +40,27 @@
 
 ;;; Shared export helper
 
-(defun nixos-org--export (url-template path description backend)
+(declare-function org-html-encode-plain-text "ox-html" (text))
+(declare-function org-latex-plain-text "ox-latex" (text info))
+
+(defun nixos-org--export (url-template path description backend info)
   "Export an Org link that uses URL-TEMPLATE for PATH.
 URL-TEMPLATE is a format string with one %s for the query, PATH
 is the link target, DESCRIPTION is the link text, BACKEND is the
-export backend."
-  (declare (pure t) (side-effect-free t))
-  (let ((url (format url-template (url-hexify-string path)))
-        (desc (or description path)))
+export backend and INFO the export plist.
+
+Org transcodes a supplied DESCRIPTION before it reaches an
+exporter, so only the link target that stands in for a missing
+DESCRIPTION is escaped here."
+  (let ((url (nixos--search-url url-template path)))
     (pcase backend
-      ('html (format "<a href=\"%s\">%s</a>" url desc))
-      ('latex (format "\\href{%s}{%s}" url desc))
-      (_ desc))))
+      ('html (format "<a href=\"%s\">%s</a>" url
+                     (or description
+                         (org-html-encode-plain-text path))))
+      ('latex (format "\\href{%s}{%s}" url
+                      (or description
+                          (org-latex-plain-text path info))))
+      (_ (or description path)))))
 
 
 ;;; nixos-package: link
@@ -70,12 +79,12 @@ Otherwise call `nixos-package'."
    (t
     (nixos-package path))))
 
-(defun nixos-org-package-export (path description backend _info)
+(defun nixos-org-package-export (path description backend info)
   "Export a `nixos-package:' link to search.nixos.org.
 PATH is the package name, DESCRIPTION is the link text,
-BACKEND is the export backend."
+BACKEND is the export backend and INFO the export plist."
   (nixos-org--export nixos-package-search-url-template
-                     path description backend))
+                     path description backend info))
 
 (org-link-set-parameters "nixos-package"
                          :follow #'nixos-org-package-open
@@ -88,12 +97,12 @@ BACKEND is the export backend."
   "Open a `nixos-option:' Org link for PATH."
   (nixos-option path))
 
-(defun nixos-org-option-export (path description backend _info)
+(defun nixos-org-option-export (path description backend info)
   "Export a `nixos-option:' link to search.nixos.org.
 PATH is the option name, DESCRIPTION is the link text,
-BACKEND is the export backend."
+BACKEND is the export backend and INFO the export plist."
   (nixos-org--export nixos-option-search-url-template
-                     path description backend))
+                     path description backend info))
 
 (org-link-set-parameters "nixos-option"
                          :follow #'nixos-org-option-open
@@ -108,12 +117,12 @@ Opens the browse-packages tabulated list filtered to packages
 whose names contain PATH as a substring."
   (nixos-browse-packages (nixos--search-names 'package path) path))
 
-(defun nixos-org-package-search-export (path description backend _info)
+(defun nixos-org-package-search-export (path description backend info)
   "Export a `nixos-package-search:' link to search.nixos.org.
 PATH is the search term, DESCRIPTION is the link text,
-BACKEND is the export backend."
+BACKEND is the export backend and INFO the export plist."
   (nixos-org--export nixos-package-search-url-template
-                     path description backend))
+                     path description backend info))
 
 (org-link-set-parameters "nixos-package-search"
                          :follow #'nixos-org-package-search-open
@@ -128,12 +137,12 @@ Opens the browse-options tabulated list filtered to options
 whose names contain PATH as a substring."
   (nixos-browse-options (nixos--search-names 'option path) path))
 
-(defun nixos-org-option-search-export (path description backend _info)
+(defun nixos-org-option-search-export (path description backend info)
   "Export a `nixos-option-search:' link to search.nixos.org.
 PATH is the search term, DESCRIPTION is the link text,
-BACKEND is the export backend."
+BACKEND is the export backend and INFO the export plist."
   (nixos-org--export nixos-option-search-url-template
-                     path description backend))
+                     path description backend info))
 
 (org-link-set-parameters "nixos-option-search"
                          :follow #'nixos-org-option-search-open
