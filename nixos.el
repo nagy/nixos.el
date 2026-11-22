@@ -475,6 +475,15 @@ prefix stripped).  Shared by table bookmarks and the Org
                          nixos--packages-keys))
       (t (user-error "Unknown type %s" type)))))
 
+(defun nixos--search-names-or-error (type term)
+  "Return the names of TYPE that TERM matches, or signal a `user-error'.
+A nil name list means no filter at all, so an empty result would
+open the whole table under a buffer name that claims a search."
+  (or (nixos--search-names type term)
+      (user-error "No %s matches `%s'"
+                  (if (eq type 'option) "NixOS option" "Nix package")
+                  term)))
+
 
 ;;; Options
 
@@ -1918,11 +1927,13 @@ Called by the bookmark system."
         ;; from current cache, so new results appear on reopen.
         (cl-case type
           (option (nixos-browse-options
-                   (and name-prefix (nixos--search-names 'option name-prefix))
+                   (and name-prefix
+                        (nixos--search-names-or-error 'option name-prefix))
                    name-prefix)
                   (nixos--browse-table-restore-state bookmark))
           (package (nixos-browse-packages
-                    (and name-prefix (nixos--search-names 'package name-prefix))
+                    (and name-prefix
+                         (nixos--search-names-or-error 'package name-prefix))
                     name-prefix)
                    (nixos--browse-table-restore-state bookmark))
           (t (user-error "Unknown bookmark type %s" type)))

@@ -2422,18 +2422,19 @@ is the only place that names the source."
         (should (equal called-prefix "neovim"))))))
 
 (ert-deftest nixos-org-package-search-open-no-match ()
-  "`nixos-org-package-search-open' returns empty list when nothing matches."
+  "`nixos-org-package-search-open' signals when nothing matches.
+An empty name list means no filter, so the command would list every
+package under a buffer name that claims a search."
   (nixos-test--with-packages
       (nixos-test--packages-hash
        '("legacyPackages.x86_64-linux.htop"
          :pname "htop" :version "3.0" :description "viewer"))
-    (let ((called :sentinel) (called-prefix :sentinel))
+    (let ((called nil))
       (cl-letf (((symbol-function 'nixos-browse-packages)
-                 (lambda (names &optional prefix)
-                   (setq called names called-prefix prefix))))
-        (nixos-org-package-search-open "zzznotfound")
-        (should (and (listp called) (null called)))
-        (should (equal called-prefix "zzznotfound"))))))
+                 (lambda (&rest _ignored) (setq called t))))
+        (should-error (nixos-org-package-search-open "zzznotfound")
+                      :type 'user-error)
+        (should-not called)))))
 
 (ert-deftest nixos-org-package-search-export-html ()
   "`nixos-org-package-search-export' produces an HTML link."
@@ -2485,17 +2486,18 @@ is the only place that names the source."
         (should (equal called-prefix "htop"))))))
 
 (ert-deftest nixos-org-option-search-open-no-match ()
-  "`nixos-org-option-search-open' returns empty list when nothing matches."
+  "`nixos-org-option-search-open' signals when nothing matches.
+An empty name list means no filter, so the command would list every
+option under a buffer name that claims a search."
   (nixos-test--with-options
       (nixos-test--options-hash
        '("services.htop.enable" :type "boolean" :description "Htop"))
-    (let ((called :sentinel) (called-prefix :sentinel))
+    (let ((called nil))
       (cl-letf (((symbol-function 'nixos-browse-options)
-                 (lambda (names &optional prefix)
-                   (setq called names called-prefix prefix))))
-        (nixos-org-option-search-open "zzznotfound")
-        (should (and (listp called) (null called)))
-        (should (equal called-prefix "zzznotfound"))))))
+                 (lambda (&rest _ignored) (setq called t))))
+        (should-error (nixos-org-option-search-open "zzznotfound")
+                      :type 'user-error)
+        (should-not called)))))
 
 (ert-deftest nixos-org-option-search-export-html ()
   "`nixos-org-option-search-export' produces an HTML link."
@@ -2595,6 +2597,35 @@ is the only place that names the source."
                                 (name-prefix . nil)))
         (should-not called-names)
         (should-not called-prefix)))))
+
+(ert-deftest nixos-bookmark-jump-table-no-match ()
+  "A table bookmark whose prefix matches nothing signals.
+An empty name list would open the whole table under a name that
+claims a search."
+  (nixos-test--with-options
+      (nixos-test--options-hash
+       '("services.foo.enable" :type "boolean" :description "foo"))
+    (let ((called nil))
+      (cl-letf (((symbol-function 'nixos-browse-options)
+                 (lambda (&rest _ignored) (setq called t))))
+        (should-error (nixos--bookmark-jump '((type . option)
+                                              (name-prefix . "zzznotfound")))
+                      :type 'user-error)
+        (should-not called)))))
+
+(ert-deftest nixos-bookmark-jump-table-unfiltered ()
+  "A table bookmark without a prefix still opens the whole table."
+  (nixos-test--with-packages
+      (nixos-test--packages-hash
+       '("legacyPackages.x86_64-linux.htop"
+         :pname "htop" :version "3.0" :description "viewer"))
+    (let ((called-names :sentinel))
+      (cl-letf (((symbol-function 'nixos-browse-packages)
+                 (lambda (names &optional _prefix)
+                   (setq called-names names))))
+        (nixos--bookmark-jump '((type . package)
+                                (name-prefix . nil)))
+        (should-not called-names)))))
 
 (ert-deftest nixos-bookmark-jump-table-restores-state ()
   "A table jump restores the saved sort key and widths."

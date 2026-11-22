@@ -114,8 +114,9 @@ BACKEND is the export backend and INFO the export plist."
 (defun nixos-org-package-search-open (path)
   "Open a `nixos-package-search:' Org link for PATH (search term).
 Opens the browse-packages tabulated list filtered to packages
-whose names contain PATH as a substring."
-  (nixos-browse-packages (nixos--search-names 'package path) path))
+whose names contain PATH as a substring, and signals when no
+package matches."
+  (nixos-browse-packages (nixos--search-names-or-error 'package path) path))
 
 (defun nixos-org-package-search-export (path description backend info)
   "Export a `nixos-package-search:' link to search.nixos.org.
@@ -134,8 +135,9 @@ BACKEND is the export backend and INFO the export plist."
 (defun nixos-org-option-search-open (path)
   "Open a `nixos-option-search:' Org link for PATH (search term).
 Opens the browse-options tabulated list filtered to options
-whose names contain PATH as a substring."
-  (nixos-browse-options (nixos--search-names 'option path) path))
+whose names contain PATH as a substring, and signals when no
+option matches."
+  (nixos-browse-options (nixos--search-names-or-error 'option path) path))
 
 (defun nixos-org-option-search-export (path description backend info)
   "Export a `nixos-option-search:' link to search.nixos.org.
