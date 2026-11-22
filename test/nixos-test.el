@@ -1715,6 +1715,14 @@ buffer."
                          "  pkgs.chickenPackages_5.chickenEggs.\"7off\"\n"
                          "]\n"))))
 
+(ert-deftest nixos-export-nix-escapes-interpolation ()
+  "A quoted attribute name escapes the interpolation opener."
+  (should (equal (nixos--export-nix
+                  '(("a.${x}.b" . ["x" "" ""])))
+                 (concat "[\n"
+                         "  pkgs.a.\"\\${x}\".b\n"
+                         "]\n"))))
+
 (ert-deftest nixos-browse-export-markdown-buffer ()
   "The markdown command fills a read-only buffer."
   (nixos-test--with-package-table

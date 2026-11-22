@@ -2550,12 +2550,14 @@ escaped, so the table keeps its shape."
   "Regexp matching one bare Nix attribute name.")
 
 (defun nixos--nix-attribute-segment (segment)
-  "Return Nix attribute SEGMENT, quoted when it is no identifier."
+  "Return Nix attribute SEGMENT, quoted when it is no identifier.
+The quoted form escapes the interpolation opener, so an attribute
+name that carries one stays a literal name."
   (declare (pure t) (side-effect-free t))
   (if (string-match-p nixos--nix-identifier-re segment)
       (concat "." segment)
     (concat ".\""
-            (replace-regexp-in-string "[\\\"]" "\\\\\\&" segment)
+            (replace-regexp-in-string "[\\\"]\\|\\${" "\\\\\\&" segment)
             "\"")))
 
 (defun nixos--export-nix (rows)
