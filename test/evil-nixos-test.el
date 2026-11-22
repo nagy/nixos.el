@@ -134,6 +134,24 @@
               (should (equal position (format "%s:12" source))))))
       (delete-file source))))
 
+(ert-deftest evil-nixos-goto-definition-keeps-a-colon-in-the-file-name ()
+  "A source file whose name carries a colon still resolves.
+The line and column suffix is what splits, not the first colon."
+  (let ((position nil)
+        (source (make-temp-file "evil-nixos:colon-" nil ".nix")))
+    (unwind-protect
+        (progn
+          (write-region "" nil source)
+          (with-temp-buffer
+            (setq-local nixos--browse-position (format "%s:12" source))
+            (cl-letf (((symbol-function 'find-file-at-point)
+                       (lambda (file) (setq position file)))
+                      ((symbol-function 'evil-goto-definition)
+                       (lambda () (interactive) (setq position 'fallback))))
+              (evil-nixos-goto-definition)
+              (should (equal position (format "%s:12" source))))))
+      (delete-file source))))
+
 (ert-deftest evil-nixos-goto-definition-falls-back ()
   "Without a Position field, the fallback runs `evil-goto-definition'."
   (let ((fallback nil))

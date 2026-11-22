@@ -77,7 +77,7 @@ under point."
   (let ((position (and (boundp 'nixos--browse-position)
                        nixos--browse-position)))
     (if (and position
-             (file-exists-p (car (split-string position ":"))))
+             (file-exists-p (nixos--position-file position)))
         (find-file-at-point position)
       (evil-goto-definition))))
 
