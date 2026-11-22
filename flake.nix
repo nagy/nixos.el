@@ -182,7 +182,7 @@
           # headers, docstrings and prefix rules.  test/ stays inside the
           # lint surface, so tests follow the rules of the code.
           checks.lint =
-            pkgs.runCommand "nixos-lint"
+            pkgs.runCommandLocal "nixos-lint"
               {
                 # package-lint reads ELPA headers, so it needs an Emacs that
                 # can see the package metadata.
