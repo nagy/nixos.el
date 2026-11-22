@@ -90,6 +90,7 @@
         {
           packages.nixos = melpaBuild {
             pname = "nixos";
+            preferLocalBuild = true;
             # Nix rejects versions Nixpkgs cannot parse. Convention for
             # unreleased packages: <upstream-version>-unstable-<YYYY-MM-DD>.
             # Derive the date from the flake self-reference: it names the
