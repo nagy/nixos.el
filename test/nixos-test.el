@@ -980,6 +980,22 @@ found nothing on a fresh session."
         (should (string-match-p "packages" url-arg))
         (kill-buffer)))))
 
+(ert-deftest nixos-browse-search-url-package-encodes-the-name ()
+  "`nixos-browse-search-url' encodes a name with a URL metacharacter."
+  (nixos-test--with-packages
+      (nixos-test--packages-hash
+       '("legacyPackages.x86_64-linux.gtk+"
+         :pname "gtk+" :description "toolkit"))
+    (let ((url-arg nil))
+      (cl-letf (((symbol-function 'pop-to-buffer)
+                 (lambda (buf &optional _action) (set-buffer buf)))
+                ((symbol-function 'browse-url)
+                 (lambda (url) (setq url-arg url))))
+        (nixos-package "gtk+")
+        (nixos-browse-search-url)
+        (should (string-match-p "query=gtk%2B\\'" url-arg))
+        (kill-buffer)))))
+
 (ert-deftest nixos-browse-refresh-option ()
   "`nixos-browse-refresh' re-displays the option."
   (nixos-test--with-options
@@ -1076,6 +1092,13 @@ found nothing on a fresh session."
   (should (string-match-p
            "htop"
            (format nixos-package-search-url-template "htop"))))
+
+(ert-deftest nixos-search-url-encodes-the-query ()
+  "A name with a URL metacharacter is encoded, not pasted in raw.
+The metacharacters of the template stay as they are."
+  (should (equal (nixos--search-url "https://example.org/?a=1&q=%s"
+                                    "gtk+ & a#b%c d")
+                 "https://example.org/?a=1&q=gtk%2B%20%26%20a%23b%25c%20d")))
 
 
 ;;; Tabulated browse mode

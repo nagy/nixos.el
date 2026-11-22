@@ -1129,6 +1129,14 @@ This shows requisites, references, derivers, etc."
     (json-serialize value))
    (t (prin1-to-string value))))
 
+(defun nixos--search-url (template name)
+  "Return the search URL that TEMPLATE builds for NAME.
+TEMPLATE is one of the `nixos-*-search-url-template' defcustoms.
+NAME is URL-encoded, so a name that carries `+', `&', `#' or a
+space reaches search.nixos.org intact."
+  (declare (pure t) (side-effect-free t))
+  (format template (url-hexify-string name)))
+
 (defun nixos-browse-search-url ()
   "Open the current option or package on search.nixos.org."
   (interactive)
@@ -1136,12 +1144,10 @@ This shows requisites, references, derivers, etc."
     (user-error "Flake nodes are not on search.nixos.org"))
   (unless nixos--browse-name
     (user-error "No option or package in this buffer"))
-  (let ((url (if (eq nixos--browse-type 'option)
-                 (format nixos-option-search-url-template
-                         nixos--browse-name)
-               (format nixos-package-search-url-template
-                       nixos--browse-name))))
-    (browse-url url)))
+  (browse-url (nixos--search-url (if (eq nixos--browse-type 'option)
+                                    nixos-option-search-url-template
+                                  nixos-package-search-url-template)
+                                 nixos--browse-name)))
 
 (defun nixos-browse-refresh (&rest _ignored)
   "Refresh the current browse buffer.
@@ -2789,7 +2795,7 @@ appear in the list." typestr)
             `(defun ,search-url ()
                ,(format "Open the current %s on search.nixos.org." typestr)
                (interactive)
-               (browse-url (format ,url-fmt (,current-name-fn))))
+               (browse-url (nixos--search-url ,url-fmt (,current-name-fn))))
           nil)
 
        ;;;###autoload
@@ -2924,11 +2930,11 @@ Add this alongside `nixos-thing-at-point-setup' in
 
 (defun nixos--embark-browse-option-url (cand)
   "Open CAND on search.nixos.org options."
-  (browse-url (format nixos-option-search-url-template cand)))
+  (browse-url (nixos--search-url nixos-option-search-url-template cand)))
 
 (defun nixos--embark-browse-package-url (cand)
   "Open CAND on search.nixos.org packages."
-  (browse-url (format nixos-package-search-url-template cand)))
+  (browse-url (nixos--search-url nixos-package-search-url-template cand)))
 
 (defvar-keymap nixos-embark-option-map
   :doc "Embark actions for NixOS option candidates.
