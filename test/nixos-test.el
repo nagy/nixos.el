@@ -2778,6 +2778,17 @@ that names a node carries that node's source."
         (should (equal (cddr nixpkgs-node)
                        '(("flake-utils" follows "flake-utils"))))))))
 
+(ert-deftest nixos-flake-input-tree-keeps-every-follows-component ()
+  "A follows entry names its whole path, not its first component."
+  (let* ((nodes (make-hash-table :test 'equal))
+         (root (make-hash-table :test 'equal))
+         (inputs (make-hash-table :test 'equal)))
+    (puthash "systems" (vector "outer" "inner") inputs)
+    (puthash "inputs" inputs root)
+    (puthash "root" root nodes)
+    (should (equal (nixos--flake-input-tree nodes "root")
+                   '(("systems" follows "outer/inner"))))))
+
 (ert-deftest nixos-display-flake-overview ()
   "`nixos--display-flake-overview' lists outputs and flake metadata."
   (let* ((cache (make-hash-table :test 'equal))

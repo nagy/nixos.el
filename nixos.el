@@ -1429,8 +1429,9 @@ NODES is the \"locks.nodes\" hash table and ROOT the node id of the
 flake itself.  Each node is (NAME SOURCE CHILDREN...), where SOURCE
 is the original URL of the input or nil, and each child has the same
 shape.  An input that follows another input renders as (NAME follows
-TEXT).  The tree carries no display text, so the caller owns the
-indentation and the faces."
+PATH), where PATH names every component of the lock entry that the
+input follows.  The tree carries no display text, so the caller owns
+the indentation and the faces."
   (cl-labels ((inputs-of (node)
                 (and (hash-table-p node) (gethash "inputs" node)))
               (names-of (inputs)
@@ -1447,7 +1448,8 @@ indentation and the faces."
                    (lambda (name)
                      (let ((value (gethash name inputs)))
                        (if (vectorp value)
-                           (list name 'follows (aref value 0))
+                           (list name 'follows
+                                 (mapconcat #'identity value "/"))
                          (let ((child (gethash value nodes)))
                            (append (list name (nixos--flake-input-source child))
                                    (unless (or (null value)
