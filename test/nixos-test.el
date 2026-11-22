@@ -767,6 +767,33 @@ versions agrees when the lengths differ."
           (should (string-match-p "htop" (buffer-string))))
         (kill-buffer displayed)))))
 
+(ert-deftest nixos-package-fallback-loads-the-cache-first ()
+  "The JSON fallback builds its key after the cache load.
+The load derives `nixos--package-key-prefix', so an unprefixed key
+found nothing on a fresh session."
+  (let ((nixos--packages-cache nil)
+        (nixos--packages-keys nil)
+        (nixos--package-key-prefix nil)
+        (displayed nil))
+    (cl-letf (((symbol-function 'nixos--packages-load)
+               (lambda ()
+                 (setq nixos--package-key-prefix
+                       "legacyPackages.x86_64-linux.")
+                 (setq nixos--packages-cache
+                       (nixos-test--packages-hash
+                        '("legacyPackages.x86_64-linux.htop"
+                          :pname "htop"
+                          :version "3.0"
+                          :description "process viewer")))))
+              ((symbol-function 'nixos--package-meta)
+               (lambda (_) nil))
+              ((symbol-function 'pop-to-buffer)
+               (lambda (buf &optional _action) (setq displayed buf))))
+      (nixos-package "htop")
+      (should displayed)
+      (should (buffer-live-p displayed))
+      (kill-buffer displayed))))
+
 (ert-deftest nixos-package-noninteractive-with-meta ()
   "`nixos-package' displays package metadata when `nixos--package-meta' succeeds."
   (nixos-test--with-packages

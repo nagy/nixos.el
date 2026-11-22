@@ -1979,9 +1979,11 @@ contents of `nixos-search-json-file' are shown."
     (let ((info (nixos--package-meta cand)))
       (if info
           (nixos--display-package cand info)
-        ;; Fall back to the search JSON data.
-        (let* ((full-key (concat nixos--package-key-prefix cand))
-               (data (gethash full-key (nixos--packages-load))))
+        ;; Fall back to the search JSON data.  The load runs first,
+        ;; because it is what derives `nixos--package-key-prefix'.
+        (let* ((items (nixos--packages-load))
+               (full-key (concat nixos--package-key-prefix cand))
+               (data (gethash full-key items)))
           (if data
               (nixos--display-package
                cand
