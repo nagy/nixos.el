@@ -1400,7 +1400,7 @@ official `nix flake metadata' input tree."
            (repo (and (hash-table-p locked) (gethash "repo" locked)))
            (rev (and (hash-table-p locked) (gethash "rev" locked)))
            (url (or (and (hash-table-p locked) (gethash "url" locked))
-                    (and (hash-table-p orig) (gethash "url" locked))))
+                    (and (hash-table-p orig) (gethash "url" orig))))
            (last (and (hash-table-p locked) (gethash "lastModified" locked)))
            (src (cond
                  ((and (equal type "github") owner repo rev)

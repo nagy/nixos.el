@@ -2200,6 +2200,33 @@ Tired is optional, so a stub stands in for `tired-shorten-path'."
       (should (equal (nixos--flake-input-source node) "source")))
     (should (equal (gethash "url" locked) "file:///nix/store/abc-source"))))
 
+(ert-deftest nixos-flake-input-source-reads-an-original-only-node ()
+  "A node without `locked' takes its URL from `original'.
+A flake.lock keeps a node's locked branch sparse, so the original
+is the only place that names the source."
+  (let ((node (make-hash-table :test 'equal))
+        (orig (make-hash-table :test 'equal)))
+    (puthash "type" "path" orig)
+    (puthash "url" "file:///nix/store/abc-source" orig)
+    (puthash "original" orig node)
+    (cl-letf (((symbol-function 'tired-shorten-path)
+               (lambda (path) (string-remove-prefix "/nix/store/abc-" path))))
+      (should (equal (nixos--flake-input-source node) "source")))))
+
+(ert-deftest nixos-flake-input-source-falls-back-to-the-original-url ()
+  "A locked branch without a URL leaves the original URL in charge."
+  (let ((node (make-hash-table :test 'equal))
+        (locked (make-hash-table :test 'equal))
+        (orig (make-hash-table :test 'equal)))
+    (puthash "type" "path" locked)
+    (puthash "type" "path" orig)
+    (puthash "url" "file:///nix/store/abc-source" orig)
+    (puthash "locked" locked node)
+    (puthash "original" orig node)
+    (cl-letf (((symbol-function 'tired-shorten-path)
+               (lambda (path) (string-remove-prefix "/nix/store/abc-" path))))
+      (should (equal (nixos--flake-input-source node) "source")))))
+
 (ert-deftest nixos-bookmark-url ()
   "Bookmark records for URL packages include the URL state."
   (let ((meta-ht (make-hash-table :test 'equal)))
