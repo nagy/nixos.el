@@ -40,7 +40,6 @@
           ...
         }:
         let
-          inherit (pkgs.emacsPackages) melpaBuild;
 
           # Options JSON from a minimal NixOS evaluation (empty config).
           # The derivation hits the NixOS binary cache, so no local build
@@ -86,98 +85,117 @@
             epkgs.evil
             epkgs.nix-mode
           ]);
+          version =
+            let
+              d = self.lastModifiedDate or "19700101000000";
+            in
+            "0-unstable-${builtins.substring 0 4 d}-${builtins.substring 4 2 d}-${builtins.substring 6 2 d}";
+          # Overridable, so a consumer can swap the Emacs or the package set:
+          #   inputs.nixos.el.packages.${system}.nixos.override { emacs = pkgs.emacs-nox; }
+          nixos = lib.makeOverridable (
+            {
+              # `melpaBuild' closes over the Emacs of its package set, so an
+              # `emacs' argument on the build does nothing. Build the set
+              # against the chosen Emacs instead.
+              emacs ? pkgs.emacs,
+              emacsPackages ? emacs.pkgs,
+              melpaBuild ? emacsPackages.melpaBuild,
+              # The flake passes this, so a plain import stays explicit.
+              # Nix rejects versions Nixpkgs cannot parse. Convention for
+              # unreleased packages: <upstream-version>-unstable-<YYYY-MM-DD>,
+              # derived from the last commit of the tree, docs-only commits
+              # included.
+              version,
+            }:
+            melpaBuild {
+              pname = "nixos";
+              preferLocalBuild = true;
+              inherit version;
+
+              src = lib.cleanSource ./.;
+
+              packageRequires = [
+                pkgs.emacsPackages.magit-section
+                pkgs.emacsPackages.nix-mode
+              ];
+
+              # `melpaBuild' propagates `packageRequires' but does not put
+              # it on the load path of this build, and nixos.el requires
+              # `magit-section' to byte-compile.
+              preBuild = ''
+                export PATH="${emacsWithDeps}/bin:$PATH"
+              '';
+
+              # Bake the store paths of the options/search JSON into the
+              # defcustom defaults, so no runtime configuration is needed.
+              postPatch = ''
+                substituteInPlace nixos.el \
+                  --replace-fail '/etc/nixos-options.json' ${nixosOptionsJson}
+                substituteInPlace nixos.el \
+                  --replace-fail '/etc/nixos-search.json' ${nixosSearchJson}
+              '';
+
+              # Byte-compilation warnings fail the build. Keep it on: it is
+              # the cheapest lint the package will ever get.
+              turnCompilationWarningToError = true;
+
+              checkPhase = ''
+                runHook preCheck
+                # melpaBuild stages only root-level files into the build
+                # directory, so the test tree comes back from the store.
+                # A drop first keeps a second copy out at ./test/test, and
+                # --no-preserve=mode drops the read-only store bits.
+                rm -rf ./test
+                cp -r --no-preserve=mode ${./test} ./test
+                # Every test runs under the Evil-capable Emacs, so one glob
+                # covers the suite and a new test file needs no flake edit.
+                # The package itself never loads Evil.
+                emacs=${emacsWithDeps}/bin/emacs
+                $emacs --batch -L . -L test \
+                  --eval '(setq byte-compile-error-on-warn t)' \
+                  -f batch-byte-compile evil-nixos.el test/*-test.el
+                # printf repeats "-l %s" per match, which turns the glob
+                # into -l <file> pairs.  failglob makes an empty glob a
+                # shell error, so the guard fires even without `set -e'.
+                # Restore default glob semantics right after: the unquoted
+                # $test_args below relies on them.
+                shopt -s failglob
+                test_args=$(printf -- "-l %s " test/*-test.elc) || { echo 'no tests matched test/*-test.el' >&2; exit 1; }
+                shopt -u failglob
+                $emacs --batch -L . -L test \
+                  $test_args \
+                  -f ert-run-tests-batch-and-exit
+                runHook postCheck
+              '';
+
+              doCheck = true;
+
+              meta = {
+                description = "Browse NixOS options and packages from Emacs";
+                longDescription = ''
+                  Provides interactive completing-read interfaces for
+                  browsing NixOS options and Nix packages.
+
+                  Data sources are baked in at build time via Nix store
+                  paths, so no runtime configuration is needed when built
+                  via this flake.
+                '';
+                license = lib.licenses.agpl3Plus;
+                homepage = "https://github.com/nagy/nixos.el";
+                maintainers = with lib.maintainers; [ nagy ];
+                platforms = lib.platforms.unix;
+              };
+            }
+          ) { inherit version; };
         in
         {
-          packages.nixos = melpaBuild {
-            pname = "nixos";
-            preferLocalBuild = true;
-            # Nix rejects versions Nixpkgs cannot parse. Convention for
-            # unreleased packages: <upstream-version>-unstable-<YYYY-MM-DD>.
-            # Derive the date from the flake self-reference: it names the
-            # last commit of the tree, docs-only commits included. Fall
-            # back to the epoch when the source is not a git checkout.
-            version =
-              let
-                d = self.lastModifiedDate or "19700101000000";
-              in
-              "0-unstable-${builtins.substring 0 4 d}-${builtins.substring 4 2 d}-${builtins.substring 6 2 d}";
 
-            src = lib.cleanSource ./.;
-
-            packageRequires = [
-              pkgs.emacsPackages.magit-section
-              pkgs.emacsPackages.nix-mode
-            ];
-
-            # `melpaBuild' propagates `packageRequires' but does not put
-            # it on the load path of this build, and nixos.el requires
-            # `magit-section' to byte-compile.
-            preBuild = ''
-              export PATH="${emacsWithDeps}/bin:$PATH"
-            '';
-
-            # Bake the store paths of the options/search JSON into the
-            # defcustom defaults, so no runtime configuration is needed.
-            postPatch = ''
-              substituteInPlace nixos.el \
-                --replace-fail '/etc/nixos-options.json' ${nixosOptionsJson}
-              substituteInPlace nixos.el \
-                --replace-fail '/etc/nixos-search.json' ${nixosSearchJson}
-            '';
-
-            # Byte-compilation warnings fail the build. Keep it on: it is
-            # the cheapest lint the package will ever get.
-            turnCompilationWarningToError = true;
-
-            checkPhase = ''
-              runHook preCheck
-              # melpaBuild stages only root-level files into the build
-              # directory, so the test tree comes back from the store.
-              # A drop first keeps a second copy out at ./test/test, and
-              # --no-preserve=mode drops the read-only store bits.
-              rm -rf ./test
-              cp -r --no-preserve=mode ${./test} ./test
-              # Every test runs under the Evil-capable Emacs, so one glob
-              # covers the suite and a new test file needs no flake edit.
-              # The package itself never loads Evil.
-              emacs=${emacsWithDeps}/bin/emacs
-              $emacs --batch -L . -L test \
-                --eval '(setq byte-compile-error-on-warn t)' \
-                -f batch-byte-compile evil-nixos.el test/*-test.el
-              # printf repeats "-l %s" per match, which turns the glob
-              # into -l <file> pairs.  failglob makes an empty glob a
-              # shell error, so the guard fires even without `set -e'.
-              # Restore default glob semantics right after: the unquoted
-              # $test_args below relies on them.
-              shopt -s failglob
-              test_args=$(printf -- "-l %s " test/*-test.elc) || { echo 'no tests matched test/*-test.el' >&2; exit 1; }
-              shopt -u failglob
-              $emacs --batch -L . -L test \
-                $test_args \
-                -f ert-run-tests-batch-and-exit
-              runHook postCheck
-            '';
-
-            doCheck = true;
-
-            meta = {
-              description = "Browse NixOS options and packages from Emacs";
-              longDescription = ''
-                Provides interactive completing-read interfaces for
-                browsing NixOS options and Nix packages.
-
-                Data sources are baked in at build time via Nix store
-                paths, so no runtime configuration is needed when built
-                via this flake.
-              '';
-              license = lib.licenses.agpl3Plus;
-              homepage = "https://github.com/nagy/nixos.el";
-              maintainers = with lib.maintainers; [ nagy ];
-              platforms = lib.platforms.unix;
-            };
-          };
-
+          packages.nixos = nixos;
           packages.default = config.packages.nixos;
+
+          # The package byte-compiles with warnings as errors and runs ERT in
+          # checkPhase, so building it is the gate; no second build.
+          checks.default = config.packages.nixos;
 
           # Lint gate for the files the byte compiler does not judge:
           # headers, docstrings and prefix rules.  test/ stays inside the
